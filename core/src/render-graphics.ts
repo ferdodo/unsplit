@@ -113,7 +113,7 @@ export function renderGraphics(puzzle: Puzzle) {
 		}
 		// --- Draw left line ---
 
-		graphic.fill(0x1099bb);
+		graphic.fill(0x99bb10);
 		graphic.stroke({ width: 2, color: 0 });
 	}
 }

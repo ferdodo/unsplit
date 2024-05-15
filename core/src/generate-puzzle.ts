@@ -19,6 +19,8 @@ export function generatePuzzle(): Puzzle {
 			block: {
 				x: randomFloat(-0.5, w - 0.5),
 				y: randomFloat(-0.5, h - 0.5),
+				//x: pieces.length % w,
+				//y: Math.floor(pieces.length / w),
 				w: 1,
 				h: 1
 			}

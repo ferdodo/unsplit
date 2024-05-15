@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createPuzzleStorage, createPixiApplication, createWinObservable } from "core";
+	import { createPuzzleStorage, createPixiApplication, createWinObservable, share } from "core";
 	import { onDestroy, onMount } from "svelte";
 
 	const puzzleStorage = createPuzzleStorage();
@@ -24,8 +24,10 @@
 	<div bind:this={canvasContainer}></div>
 
 	{#if win}
-		<div class="win">
-			<h1>Win!</h1>
-		</div>
+		<cookies-p style="text-align:center">
+			🎉 C'est gagné pour aujourd'hui ! 🥳 <br>
+
+			<cookies-button on:click={share} title="Copier dans le presse-papier"> Partager </cookies-button>
+		</cookies-p>
 	{/if}
 </cookies-panel>

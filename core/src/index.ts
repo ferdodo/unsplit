@@ -11,6 +11,7 @@ export { incrementMoveCount, getMoveCount } from "./move-count";
 export { makeGraphicsDraggable } from "./make-graphics-draggable";
 export { renderGraphics } from "./render-graphics";
 export { screenBlock } from "./screen-block";
+export { share } from "./share";
 export { snapToFinalPosition } from "./snap-to-final-position";
 export type { Config } from "./types/config";
 export type { Piece } from "./types/piece";

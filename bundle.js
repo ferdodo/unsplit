@@ -42551,7 +42551,7 @@ ${parts.join("\n")}
       var Subject_1 = require_Subject();
       var Subscriber_1 = require_Subscriber();
       var lift_1 = require_lift();
-      function share(options) {
+      function share2(options) {
         if (options === void 0) {
           options = {};
         }
@@ -42615,7 +42615,7 @@ ${parts.join("\n")}
           })(wrapperSource);
         };
       }
-      exports.share = share;
+      exports.share = share2;
       function handleReset(reset, on) {
         var args = [];
         for (var _i = 2; _i < arguments.length; _i++) {
@@ -47806,6 +47806,10 @@ ${parts.join("\n")}
   function space() {
     return text(" ");
   }
+  function listen(node, event, handler, options) {
+    node.addEventListener(event, handler, options);
+    return () => node.removeEventListener(event, handler, options);
+  }
   function attr(node, attribute, value) {
     if (value == null)
       node.removeAttribute(attribute);
@@ -47824,6 +47828,13 @@ ${parts.join("\n")}
   }
   function children(element2) {
     return Array.from(element2.childNodes);
+  }
+  function set_style(node, key, value, important) {
+    if (value == null) {
+      node.style.removeProperty(key);
+    } else {
+      node.style.setProperty(key, value, important ? "important" : "");
+    }
   }
   function get_custom_elements_slots(element2) {
     const result = {};
@@ -50216,6 +50227,7 @@ ${parts.join("\n")}
     renderGraphics(puzzle);
     const dragEnd$ = makeGraphicsDraggable(graphics, application, puzzleStorage);
     dragEnd$.subscribe(function([id, block]) {
+      incrementMoveCount();
       const currentPuzzle = puzzleStorage.read();
       const newPuzzle = {
         ...currentPuzzle,
@@ -50496,20 +50508,41 @@ ${parts.join("\n")}
 
   // ../core/src/playground.svelte.js
   function create_if_block(ctx) {
-    let div;
+    let cookies_p;
+    let t0;
+    let br;
+    let t1;
+    let cookies_button;
+    let mounted;
+    let dispose;
     return {
       c() {
-        div = element("div");
-        div.innerHTML = `<h1>Win!</h1>`;
-        attr(div, "class", "win");
+        cookies_p = element("cookies-p");
+        t0 = text("\u{1F389} C'est gagn\xE9 pour aujourd'hui ! \u{1F973} ");
+        br = element("br");
+        t1 = space();
+        cookies_button = element("cookies-button");
+        cookies_button.textContent = "Partager";
+        set_custom_element_data(cookies_button, "title", "Copier dans le presse-papier");
+        set_style(cookies_p, "text-align", "center");
       },
       m(target, anchor) {
-        insert(target, div, anchor);
+        insert(target, cookies_p, anchor);
+        append(cookies_p, t0);
+        append(cookies_p, br);
+        append(cookies_p, t1);
+        append(cookies_p, cookies_button);
+        if (!mounted) {
+          dispose = listen(cookies_button, "click", share);
+          mounted = true;
+        }
       },
       d(detaching) {
         if (detaching) {
-          detach(div);
+          detach(cookies_p);
         }
+        mounted = false;
+        dispose();
       }
     };
   }
@@ -50613,6 +50646,15 @@ ${parts.join("\n")}
     const block = { x: x2, y: y2, w: w2, h: h2 };
     memo.set(key, block);
     return block;
+  }
+
+  // ../core/src/move-count.ts
+  var moveCount = 0;
+  function incrementMoveCount() {
+    moveCount++;
+  }
+  function getMoveCount() {
+    return moveCount;
   }
 
   // ../core/src/make-graphics-draggable.ts
@@ -50920,6 +50962,23 @@ ${parts.join("\n")}
     w: config.playgroundWidthPx * (1 - config.margin * 2),
     h: config.playgroundHeightPx * (1 - config.margin * 2)
   };
+
+  // ../core/src/share.ts
+  function share() {
+    const date = /* @__PURE__ */ new Date();
+    const year = date.getFullYear();
+    const month = ("0" + (date.getMonth() + 1)).slice(-2);
+    const day = ("0" + date.getDate()).slice(-2);
+    const formattedDate = `${year}/${month}/${day}`;
+    let text2 = `Unsplit ${formattedDate}`;
+    text2 += `
+
+Puzzle r\xE9ussi en ${getMoveCount()} mouvements.`;
+    text2 += `
+
+https://ferdodo.github.io/unsplit`;
+    navigator.clipboard.writeText(text2);
+  }
 
   // ../core/src/snap-to-final-position.ts
   var import_blockwise6 = __toESM(require_dist(), 1);

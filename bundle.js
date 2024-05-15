@@ -50456,6 +50456,8 @@ ${parts.join("\n")}
         block: {
           x: randomFloat(-0.5, w2 - 0.5),
           y: randomFloat(-0.5, h2 - 0.5),
+          //x: pieces.length % w,
+          //y: Math.floor(pieces.length / w),
           w: 1,
           h: 1
         }
@@ -50864,6 +50866,13 @@ ${parts.join("\n")}
   };
 
   // ../core/src/render-graphics.ts
+  function getSeed2() {
+    const today = /* @__PURE__ */ new Date();
+    const date = today.getDate();
+    const month = today.getMonth();
+    const year = today.getFullYear();
+    return date + "-" + month + "-" + year;
+  }
   function renderGraphics(puzzle) {
     for (const piece of puzzle.pieces) {
       const graphic = piece.graphic;
@@ -50875,7 +50884,7 @@ ${parts.join("\n")}
       const finalPosition = getPieceFinalPosition(puzzle, piece);
       graphic.moveTo(-mappedBlock.w / 2, -mappedBlock.h / 2);
       const isTopRow = finalPosition.y === 0;
-      const topKey = `vertical-${finalPosition.x}-${finalPosition.y}`;
+      const topKey = `${getSeed2()}-vertical-${finalPosition.x}-${finalPosition.y}`;
       const randomTop = new Randoma2({ seed: topKey });
       if (isTopRow) {
         graphic.lineTo(-mappedBlock.w / 2 + mappedBlock.w, -mappedBlock.h / 2);
@@ -50897,7 +50906,7 @@ ${parts.join("\n")}
       if (isRightColumn) {
         graphic.lineTo(mappedBlock.w / 2, -mappedBlock.h / 2 + mappedBlock.h);
       } else {
-        const rightKey = `horizontal-${finalPosition.x + 1}-${finalPosition.y}`;
+        const rightKey = `${getSeed2()}-horizontal-${finalPosition.x + 1}-${finalPosition.y}`;
         const randomRight = new Randoma2({ seed: rightKey });
         const float1 = randomRight.float();
         const float2 = randomRight.float();
@@ -50916,7 +50925,7 @@ ${parts.join("\n")}
       if (isBottomRow) {
         graphic.lineTo(-mappedBlock.w / 2, -mappedBlock.h / 2 + mappedBlock.h);
       } else {
-        const bottomKey = `vertical-${finalPosition.x}-${finalPosition.y + 1}`;
+        const bottomKey = `${getSeed2()}-vertical-${finalPosition.x}-${finalPosition.y + 1}`;
         const randomBottom = new Randoma2({ seed: bottomKey });
         const float1 = randomBottom.float();
         const float2 = randomBottom.float();
@@ -50935,7 +50944,7 @@ ${parts.join("\n")}
       if (isLeftColumn) {
         graphic.lineTo(-mappedBlock.w / 2, -mappedBlock.h / 2);
       } else {
-        const leftKey = `horizontal-${finalPosition.x}-${finalPosition.y}`;
+        const leftKey = `${getSeed2()}-horizontal-${finalPosition.x}-${finalPosition.y}`;
         const randomLeft = new Randoma2({ seed: leftKey });
         const float1 = randomLeft.float();
         const float2 = randomLeft.float();
@@ -50950,7 +50959,7 @@ ${parts.join("\n")}
           -mappedBlock.h / 2
         );
       }
-      graphic.fill(1087931);
+      graphic.fill(10074896);
       graphic.stroke({ width: 2, color: 0 });
     }
   }

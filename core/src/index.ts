@@ -7,6 +7,7 @@ export { createWinObservable } from "./create-win-observable";
 export { default as Playground } from "./playground.svelte";
 export { defaultContextId } from "./default-context-id";
 export { getPieceFinalPosition } from "./get-piece-final-position";
+export { incrementMoveCount, getMoveCount } from "./move-count";
 export { makeGraphicsDraggable } from "./make-graphics-draggable";
 export { renderGraphics } from "./render-graphics";
 export { screenBlock } from "./screen-block";

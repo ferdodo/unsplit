@@ -10,7 +10,8 @@ import {
 	config,
 	screenBlock,
 	Puzzle,
-	snapToFinalPosition
+	snapToFinalPosition,
+	incrementMoveCount
 } from "core";
 
 export async function createPixiApplication(puzzleStorage: PuzzleStorage): Promise<Application> {
@@ -37,6 +38,7 @@ export async function createPixiApplication(puzzleStorage: PuzzleStorage): Promi
 	const dragEnd$: Observable<[string, Block]> = makeGraphicsDraggable(graphics, application, puzzleStorage);
 
 	dragEnd$.subscribe(function([id, block]) {
+		incrementMoveCount();
 		const currentPuzzle = puzzleStorage.read();
 
 		const newPuzzle: Puzzle = {

@@ -1,0 +1,20 @@
+{
+  "scripts": {
+    "build": "tsc && esbuild --bundle src/index.ts --outfile=public/bundle.js",
+    "start": "concurrently npm:start:*",
+    "start:front": "sleep 2 && rm public/bundle.js && vite --host",
+    "start:core": "npm run start --prefix ../core"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cookies-ds": "^1.4.1",
+    "core": "file:../core",
+    "esbuild": "^0.17.19",
+    "rxjs": "^7.8.1",
+    "typescript": "^5.0.4",
+    "vite": "^5.2.11"
+  },
+  "dependencies": {
+    "connection-types": "^1.0.0"
+  }
+}

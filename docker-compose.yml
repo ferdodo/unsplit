@@ -1,0 +1,18 @@
+services:
+  cache:
+    build:
+      context: .
+      dockerfile: ./cache/Dockerfile
+      tags:
+        - "unsplit-cache"
+
+  front:
+    build: front
+    ports:
+      - "6655:5173"
+
+  core:
+    build:
+      context: core
+      tags:
+        - "unsplit-core"

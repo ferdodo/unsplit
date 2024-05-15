@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"baseUrl": ".",
+		"noEmit": true,
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"paths": {
+			"core": [ "src/index"],
+		},
+		"lib": [
+			"DOM",
+			"ESNext"
+		]
+	}
+}

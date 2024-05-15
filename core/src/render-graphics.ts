@@ -2,6 +2,14 @@ import { Puzzle, config, screenBlock, getPieceFinalPosition } from "core";
 import { mapToView, Block } from "blockwise";
 import Randoma from "randoma";
 
+export function getSeed(): string {
+	const today = new Date();
+	const date = today.getDate();
+	const month = today.getMonth();
+	const year = today.getFullYear();
+	return date + "-" + month + "-" + year;
+}
+
 export function renderGraphics(puzzle: Puzzle) {
 	for (const piece of puzzle.pieces) {
         const graphic = piece.graphic;
@@ -17,7 +25,7 @@ export function renderGraphics(puzzle: Puzzle) {
 
 		// --- Draw top line ---
 		const isTopRow = finalPosition.y === 0;
-		const topKey = `vertical-${finalPosition.x}-${finalPosition.y}`;
+		const topKey = `${ getSeed() }-vertical-${finalPosition.x}-${finalPosition.y}`;
 		const randomTop = new Randoma({seed: topKey});
 		
 		if (isTopRow) {
@@ -45,7 +53,7 @@ export function renderGraphics(puzzle: Puzzle) {
 		if (isRightColumn) {
 			graphic.lineTo(mappedBlock.w / 2, -mappedBlock.h / 2 + mappedBlock.h);
 		} else {
-			const rightKey = `horizontal-${finalPosition.x+1}-${finalPosition.y}`;
+			const rightKey = `${ getSeed() }-horizontal-${finalPosition.x+1}-${finalPosition.y}`;
 			const randomRight = new Randoma({seed: rightKey});
 
 			const float1 = randomRight.float();
@@ -70,7 +78,7 @@ export function renderGraphics(puzzle: Puzzle) {
 		if (isBottomRow) {
 			graphic.lineTo(-mappedBlock.w / 2, -mappedBlock.h / 2 + mappedBlock.h);
 		} else {
-			const bottomKey = `vertical-${finalPosition.x}-${finalPosition.y+1}`;
+			const bottomKey = `${ getSeed() }-vertical-${finalPosition.x}-${finalPosition.y+1}`;
 			const randomBottom = new Randoma({seed: bottomKey});
 			const float1 = randomBottom.float();
 			const float2 = randomBottom.float();
@@ -94,7 +102,7 @@ export function renderGraphics(puzzle: Puzzle) {
 		if (isLeftColumn) {
 			graphic.lineTo(-mappedBlock.w / 2, -mappedBlock.h / 2);
 		} else {
-			const leftKey = `horizontal-${finalPosition.x}-${finalPosition.y}`;
+			const leftKey = `${ getSeed() }-horizontal-${finalPosition.x}-${finalPosition.y}`;
 			const randomLeft = new Randoma({seed: leftKey});
 
 			const float1 = randomLeft.float();

@@ -2104,6 +2104,7 @@ Deprecated since v${version}`);
           if (effect) {
             this.removeEffect(effect);
             MaskEffectManager.returnMaskEffect(effect);
+            this._maskEffect = null;
           }
           if (value === null || value === void 0)
             return;
@@ -27576,7 +27577,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/utils/sayHello.mjs"() {
       init_adapter();
       saidHello = false;
-      VERSION2 = "8.1.2";
+      VERSION2 = "8.1.3";
     }
   });
 
@@ -48326,15 +48327,17 @@ ${parts.join("\n")}
 
   // ../core/src/config.ts
   var config = {
-    puzzleWidth: 4,
-    puzzleHeight: 4,
+    puzzleMinWidth: 4,
+    puzzleMaxWidth: 5,
+    puzzleMinHeight: 4,
+    puzzleMaxHeight: 6,
     playgroundWidthPx: 600,
     playgroundHeightPx: 600,
     pieceInitialOpacity: 80 / 100,
     pieceDraggedOpacity: 50 / 100,
     margin: 1 / 5,
     snapDistance: 5 / 100,
-    bumpiness: 100
+    bumpiness: 50
   };
 
   // ../core/src/create-graphics.ts
@@ -50420,6 +50423,9 @@ ${parts.join("\n")}
   // ../core/node_modules/daily-prng/dist/random-integer.js
   var seed2 = getSeed();
   var random2 = new Randoma({ seed: seed2 });
+  function randomInteger(min, max) {
+    return random2.integerInRange(min, max - 1);
+  }
 
   // ../core/src/generate-puzzle.ts
   var import_blockwise2 = __toESM(require_dist(), 1);
@@ -50443,8 +50449,8 @@ ${parts.join("\n")}
 
   // ../core/src/generate-puzzle.ts
   function generatePuzzle() {
-    const w2 = config.puzzleWidth;
-    const h2 = config.puzzleHeight;
+    const w2 = randomInteger(config.puzzleMinWidth, config.puzzleMaxWidth + 1);
+    const h2 = randomInteger(config.puzzleMinHeight, config.puzzleMaxHeight + 1);
     const block = { x: 0, y: 0, w: w2, h: h2 };
     const pieces = [];
     const piecesQty = w2 * h2;

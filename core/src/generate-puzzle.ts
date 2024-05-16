@@ -1,12 +1,12 @@
-import { randomFloat } from "daily-prng";
+import { randomFloat, randomInteger } from "daily-prng";
 import { Puzzle, Piece, config } from "core";
 import { calculateBlockDistance, findClosestBlock } from "blockwise";
 import { Graphics } from "pixi.js";
 import { uid } from "uid";
 
 export function generatePuzzle(): Puzzle {
-	const w = config.puzzleWidth;
-	const h = config.puzzleHeight;
+	const w = randomInteger(config.puzzleMinWidth, config.puzzleMaxWidth + 1);
+	const h = randomInteger(config.puzzleMinHeight, config.puzzleMaxHeight + 1);
 	const block = { x: 0, y: 0, w, h };
 	const pieces: Piece[] = [];
 	const piecesQty = w * h;

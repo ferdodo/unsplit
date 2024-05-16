@@ -1,6 +1,8 @@
 export interface Config {
-    puzzleWidth: number;
-    puzzleHeight: number;
+    puzzleMinWidth: number;
+    puzzleMinHeight: number;
+    puzzleMaxWidth: number;
+    puzzleMaxHeight: number;
     playgroundWidthPx: number;
     playgroundHeightPx: number;
     pieceInitialOpacity: number;

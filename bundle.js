@@ -57,6 +57,8 @@
         ExtensionType2["BlendMode"] = "blend-mode";
         ExtensionType2["TextureSource"] = "texture-source";
         ExtensionType2["Environment"] = "environment";
+        ExtensionType2["ShapeBuilder"] = "shape-builder";
+        ExtensionType2["Batcher"] = "batcher";
         return ExtensionType2;
       })(ExtensionType || {});
       normalizeExtension = (ext) => {
@@ -678,8 +680,8 @@
           } else if (value === null) {
             throw new Error("Cannot set Color#value to null");
           } else if (this._value === null || !this._isSourceEqual(this._value, value)) {
-            this._normalize(value);
             this._value = this._cloneSource(value);
+            this._normalize(this._value);
           }
         }
         get value() {
@@ -873,7 +875,7 @@
           return (alpha * 255 << 24) + (r2 << 16) + (g2 << 8) + b2;
         }
         /**
-         * Convert to a hexidecimal string.
+         * Convert to a hexadecimal string.
          * @example
          * import { Color } from 'pixi.js';
          * new Color('white').toHex(); // returns "#ffffff"
@@ -883,7 +885,7 @@
           return `#${"000000".substring(0, 6 - hexString.length) + hexString}`;
         }
         /**
-         * Convert to a hexidecimal string with alpha.
+         * Convert to a hexadecimal string with alpha.
          * @example
          * import { Color } from 'pixi.js';
          * new Color('white').toHexa(); // returns "#ffffffff"
@@ -1643,12 +1645,168 @@ Deprecated since v${version}`);
     }
     warnings[message] = true;
   }
-  var warnings, v8_0_0;
+  var warnings, v8_0_0, v8_3_4;
   var init_deprecation = __esm({
     "../core/node_modules/pixi.js/lib/utils/logging/deprecation.mjs"() {
       "use strict";
       warnings = {};
       v8_0_0 = "8.0.0";
+      v8_3_4 = "8.3.4";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/utils/pool/Pool.mjs
+  var Pool;
+  var init_Pool = __esm({
+    "../core/node_modules/pixi.js/lib/utils/pool/Pool.mjs"() {
+      "use strict";
+      Pool = class {
+        /**
+         * Constructs a new Pool.
+         * @param ClassType - The constructor of the items in the pool.
+         * @param {number} [initialSize] - The initial size of the pool.
+         */
+        constructor(ClassType, initialSize) {
+          this._pool = [];
+          this._count = 0;
+          this._index = 0;
+          this._classType = ClassType;
+          if (initialSize) {
+            this.prepopulate(initialSize);
+          }
+        }
+        /**
+         * Prepopulates the pool with a given number of items.
+         * @param total - The number of items to add to the pool.
+         */
+        prepopulate(total) {
+          for (let i2 = 0; i2 < total; i2++) {
+            this._pool[this._index++] = new this._classType();
+          }
+          this._count += total;
+        }
+        /**
+         * Gets an item from the pool. Calls the item's `init` method if it exists.
+         * If there are no items left in the pool, a new one will be created.
+         * @param {unknown} [data] - Optional data to pass to the item's constructor.
+         * @returns {T} The item from the pool.
+         */
+        get(data) {
+          let item;
+          if (this._index > 0) {
+            item = this._pool[--this._index];
+          } else {
+            item = new this._classType();
+          }
+          item.init?.(data);
+          return item;
+        }
+        /**
+         * Returns an item to the pool. Calls the item's `reset` method if it exists.
+         * @param {T} item - The item to return to the pool.
+         */
+        return(item) {
+          item.reset?.();
+          this._pool[this._index++] = item;
+        }
+        /**
+         * Gets the number of items in the pool.
+         * @readonly
+         * @member {number}
+         */
+        get totalSize() {
+          return this._count;
+        }
+        /**
+         * Gets the number of items in the pool that are free to use without needing to create more.
+         * @readonly
+         * @member {number}
+         */
+        get totalFree() {
+          return this._index;
+        }
+        /**
+         * Gets the number of items in the pool that are currently in use.
+         * @readonly
+         * @member {number}
+         */
+        get totalUsed() {
+          return this._count - this._index;
+        }
+        /** clears the pool - mainly used for debugging! */
+        clear() {
+          this._pool.length = 0;
+          this._index = 0;
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/utils/pool/PoolGroup.mjs
+  var PoolGroupClass, BigPool;
+  var init_PoolGroup = __esm({
+    "../core/node_modules/pixi.js/lib/utils/pool/PoolGroup.mjs"() {
+      init_Pool();
+      PoolGroupClass = class {
+        constructor() {
+          this._poolsByClass = /* @__PURE__ */ new Map();
+        }
+        /**
+         * Prepopulates a specific pool with a given number of items.
+         * @template T The type of items in the pool. Must extend PoolItem.
+         * @param {PoolItemConstructor<T>} Class - The constructor of the items in the pool.
+         * @param {number} total - The number of items to add to the pool.
+         */
+        prepopulate(Class, total) {
+          const classPool = this.getPool(Class);
+          classPool.prepopulate(total);
+        }
+        /**
+         * Gets an item from a specific pool.
+         * @template T The type of items in the pool. Must extend PoolItem.
+         * @param {PoolItemConstructor<T>} Class - The constructor of the items in the pool.
+         * @param {unknown} [data] - Optional data to pass to the item's constructor.
+         * @returns {T} The item from the pool.
+         */
+        get(Class, data) {
+          const pool = this.getPool(Class);
+          return pool.get(data);
+        }
+        /**
+         * Returns an item to its respective pool.
+         * @param {PoolItem} item - The item to return to the pool.
+         */
+        return(item) {
+          const pool = this.getPool(item.constructor);
+          pool.return(item);
+        }
+        /**
+         * Gets a specific pool based on the class type.
+         * @template T The type of items in the pool. Must extend PoolItem.
+         * @param {PoolItemConstructor<T>} ClassType - The constructor of the items in the pool.
+         * @returns {Pool<T>} The pool of the given class type.
+         */
+        getPool(ClassType) {
+          if (!this._poolsByClass.has(ClassType)) {
+            this._poolsByClass.set(ClassType, new Pool(ClassType));
+          }
+          return this._poolsByClass.get(ClassType);
+        }
+        /** gets the usage stats of each pool in the system */
+        stats() {
+          const stats = {};
+          this._poolsByClass.forEach((pool) => {
+            const name = stats[pool._classType.name] ? pool._classType.name + pool._classType.ID : pool._classType.name;
+            stats[name] = {
+              free: pool.totalFree,
+              used: pool.totalUsed,
+              size: pool.totalSize
+            };
+          });
+          return stats;
+        }
+      };
+      BigPool = new PoolGroupClass();
     }
   });
 
@@ -1794,7 +1952,6 @@ Deprecated since v${version}`);
           }
           child.parent = this;
           child.didChange = true;
-          child.didViewUpdate = false;
           child._updateFlags = 15;
           const renderGroup = this.renderGroup || this.parentRenderGroup;
           if (renderGroup) {
@@ -1810,6 +1967,7 @@ Deprecated since v${version}`);
          * Swaps the position of 2 Containers within this container.
          * @param child - First container to swap
          * @param child2 - Second container to swap
+         * @memberof scene.Container#
          */
         swapChildren(child, child2) {
           if (child === child2) {
@@ -1819,6 +1977,11 @@ Deprecated since v${version}`);
           const index2 = this.getChildIndex(child2);
           this.children[index1] = child2;
           this.children[index2] = child;
+          const renderGroup = this.renderGroup || this.parentRenderGroup;
+          if (renderGroup) {
+            renderGroup.structureDidChange = true;
+          }
+          this._didContainerChangeTick++;
         },
         /**
          * Remove the Container from its parent Container. If the Container has no parent, do nothing.
@@ -1826,6 +1989,39 @@ Deprecated since v${version}`);
          */
         removeFromParent() {
           this.parent?.removeChild(this);
+        },
+        /**
+         * Reparent the child to this container, keeping the same worldTransform.
+         * @param child - The child to reparent
+         * @returns The first child that was reparented.
+         * @memberof scene.Container#
+         */
+        reparentChild(...child) {
+          if (child.length === 1) {
+            return this.reparentChildAt(child[0], this.children.length);
+          }
+          child.forEach((c2) => this.reparentChildAt(c2, this.children.length));
+          return child[0];
+        },
+        /**
+         * Reparent the child to this container at the specified index, keeping the same worldTransform.
+         * @param child - The child to reparent
+         * @param index - The index to reparent the child to
+         * @memberof scene.Container#
+         */
+        reparentChildAt(child, index) {
+          if (child.parent === this) {
+            this.setChildIndex(child, index);
+            return child;
+          }
+          const childMat = child.worldTransform.clone();
+          child.removeFromParent();
+          this.addChildAt(child, index);
+          const newMatrix = this.worldTransform.clone();
+          newMatrix.invert();
+          childMat.prepend(newMatrix);
+          child.setFromMatrix(childMat);
+          return child;
         }
       };
     }
@@ -1849,156 +2045,6 @@ Deprecated since v${version}`);
           this.filterArea = null;
         }
       };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/utils/pool/Pool.mjs
-  var Pool;
-  var init_Pool = __esm({
-    "../core/node_modules/pixi.js/lib/utils/pool/Pool.mjs"() {
-      "use strict";
-      Pool = class {
-        /**
-         * Constructs a new Pool.
-         * @param ClassType - The constructor of the items in the pool.
-         * @param {number} [initialSize] - The initial size of the pool.
-         */
-        constructor(ClassType, initialSize) {
-          this._pool = [];
-          this._count = 0;
-          this._index = 0;
-          this._classType = ClassType;
-          if (initialSize) {
-            this.prepopulate(initialSize);
-          }
-        }
-        /**
-         * Prepopulates the pool with a given number of items.
-         * @param total - The number of items to add to the pool.
-         */
-        prepopulate(total) {
-          for (let i2 = 0; i2 < total; i2++) {
-            this._pool[this._index++] = new this._classType();
-          }
-          this._count += total;
-        }
-        /**
-         * Gets an item from the pool. Calls the item's `init` method if it exists.
-         * If there are no items left in the pool, a new one will be created.
-         * @param {unknown} [data] - Optional data to pass to the item's constructor.
-         * @returns {T} The item from the pool.
-         */
-        get(data) {
-          let item;
-          if (this._index > 0) {
-            item = this._pool[--this._index];
-          } else {
-            item = new this._classType();
-          }
-          item.init?.(data);
-          return item;
-        }
-        /**
-         * Returns an item to the pool. Calls the item's `reset` method if it exists.
-         * @param {T} item - The item to return to the pool.
-         */
-        return(item) {
-          item.reset?.();
-          this._pool[this._index++] = item;
-        }
-        /**
-         * Gets the number of items in the pool.
-         * @readonly
-         * @member {number}
-         */
-        get totalSize() {
-          return this._count;
-        }
-        /**
-         * Gets the number of items in the pool that are free to use without needing to create more.
-         * @readonly
-         * @member {number}
-         */
-        get totalFree() {
-          return this._index;
-        }
-        /**
-         * Gets the number of items in the pool that are currently in use.
-         * @readonly
-         * @member {number}
-         */
-        get totalUsed() {
-          return this._count - this._index;
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/utils/pool/PoolGroup.mjs
-  var PoolGroupClass, BigPool;
-  var init_PoolGroup = __esm({
-    "../core/node_modules/pixi.js/lib/utils/pool/PoolGroup.mjs"() {
-      init_Pool();
-      PoolGroupClass = class {
-        constructor() {
-          this._poolsByClass = /* @__PURE__ */ new Map();
-        }
-        /**
-         * Prepopulates a specific pool with a given number of items.
-         * @template T The type of items in the pool. Must extend PoolItem.
-         * @param {PoolItemConstructor<T>} Class - The constructor of the items in the pool.
-         * @param {number} total - The number of items to add to the pool.
-         */
-        prepopulate(Class, total) {
-          const classPool = this.getPool(Class);
-          classPool.prepopulate(total);
-        }
-        /**
-         * Gets an item from a specific pool.
-         * @template T The type of items in the pool. Must extend PoolItem.
-         * @param {PoolItemConstructor<T>} Class - The constructor of the items in the pool.
-         * @param {unknown} [data] - Optional data to pass to the item's constructor.
-         * @returns {T} The item from the pool.
-         */
-        get(Class, data) {
-          const pool = this.getPool(Class);
-          return pool.get(data);
-        }
-        /**
-         * Returns an item to its respective pool.
-         * @param {PoolItem} item - The item to return to the pool.
-         */
-        return(item) {
-          const pool = this.getPool(item.constructor);
-          pool.return(item);
-        }
-        /**
-         * Gets a specific pool based on the class type.
-         * @template T The type of items in the pool. Must extend PoolItem.
-         * @param {PoolItemConstructor<T>} ClassType - The constructor of the items in the pool.
-         * @returns {Pool<T>} The pool of the given class type.
-         */
-        getPool(ClassType) {
-          if (!this._poolsByClass.has(ClassType)) {
-            this._poolsByClass.set(ClassType, new Pool(ClassType));
-          }
-          return this._poolsByClass.get(ClassType);
-        }
-        /** gets the usage stats of each pool in the system */
-        stats() {
-          const stats = {};
-          this._poolsByClass.forEach((pool) => {
-            const name = stats[pool._classType.name] ? pool._classType.name + pool._classType.ID : pool._classType.name;
-            stats[name] = {
-              free: pool.totalFree,
-              used: pool.totalUsed,
-              size: pool.totalSize
-            };
-          });
-          return stats;
-        }
-      };
-      BigPool = new PoolGroupClass();
     }
   });
 
@@ -2056,6 +2102,9 @@ Deprecated since v${version}`);
       init_MaskEffectManager();
       effectsMixin = {
         _maskEffect: null,
+        _maskOptions: {
+          inverse: false
+        },
         _filterEffect: null,
         /**
          * @todo Needs docs.
@@ -2110,6 +2159,33 @@ Deprecated since v${version}`);
             return;
           this._maskEffect = MaskEffectManager.getMaskEffect(value);
           this.addEffect(this._maskEffect);
+        },
+        /**
+         * Used to set mask and control mask options.
+         * @param options
+         * @example
+         * import { Graphics, Sprite } from 'pixi.js';
+         *
+         * const graphics = new Graphics();
+         * graphics.beginFill(0xFF3300);
+         * graphics.drawRect(50, 250, 100, 100);
+         * graphics.endFill();
+         *
+         * const sprite = new Sprite(texture);
+         * sprite.setMask({
+         *     mask: graphics,
+         *     inverse: true,
+         * });
+         * @memberof scene.Container#
+         */
+        setMask(options) {
+          this._maskOptions = {
+            ...this._maskOptions,
+            ...options
+          };
+          if (options.mask) {
+            this.mask = options.mask;
+          }
         },
         /**
          * Sets a mask for the displayObject. A mask is an object that limits the visibility of an
@@ -3079,12 +3155,15 @@ Deprecated since v${version}`);
     const children2 = container.children;
     for (let i2 = 0; i2 < children2.length; i2++) {
       const child = children2[i2];
-      const changeId = (child.uid & 255) << 24 | child._didChangeId & 16777215;
-      if (previousData.data[previousData.index] !== changeId) {
-        previousData.data[previousData.index] = changeId;
+      const uid4 = child.uid;
+      const didChange = (child._didViewChangeTick & 65535) << 16 | child._didContainerChangeTick & 65535;
+      const index = previousData.index;
+      if (previousData.data[index] !== uid4 || previousData.data[index + 1] !== didChange) {
+        previousData.data[previousData.index] = uid4;
+        previousData.data[previousData.index + 1] = didChange;
         previousData.didChange = true;
       }
-      previousData.index++;
+      previousData.index = index + 2;
       if (child.children.length) {
         checkChildrenDidChange(child, previousData);
       }
@@ -3143,9 +3222,9 @@ Deprecated since v${version}`);
           const localBoundsCacheData = this._localBoundsCacheData;
           localBoundsCacheData.index = 1;
           localBoundsCacheData.didChange = false;
-          if (localBoundsCacheData.data[0] !== this._didChangeId >> 12) {
+          if (localBoundsCacheData.data[0] !== this._didViewChangeTick) {
             localBoundsCacheData.didChange = true;
-            localBoundsCacheData.data[0] = this._didChangeId >> 12;
+            localBoundsCacheData.data[0] = this._didViewChangeTick;
           }
           checkChildrenDidChange(this, localBoundsCacheData);
           if (localBoundsCacheData.didChange) {
@@ -3352,19 +3431,23 @@ Deprecated since v${version}`);
   });
 
   // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/instructions/InstructionSet.mjs
-  var InstructionSet;
+  var _tick, InstructionSet;
   var init_InstructionSet = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/shared/instructions/InstructionSet.mjs"() {
       init_uid();
+      _tick = 0;
       InstructionSet = class {
         constructor() {
           this.uid = uid("instructionSet");
           this.instructions = [];
           this.instructionSize = 0;
+          this.renderables = [];
+          this.tick = 0;
         }
         /** reset the instruction set so it can be reused set size back to 0 */
         reset() {
           this.instructionSize = 0;
+          this.tick = _tick++;
         }
         /**
          * Add an instruction to the set
@@ -3393,7 +3476,7 @@ Deprecated since v${version}`);
       init_Matrix();
       init_InstructionSet();
       RenderGroup = class {
-        constructor(root) {
+        constructor() {
           this.renderPipeId = "renderGroup";
           this.root = null;
           this.canBundle = false;
@@ -3409,6 +3492,8 @@ Deprecated since v${version}`);
           this.structureDidChange = true;
           this.instructionSet = new InstructionSet();
           this._onRenderContainers = [];
+        }
+        init(root) {
           this.root = root;
           if (root._onRender)
             this.addOnRender(root);
@@ -3417,6 +3502,21 @@ Deprecated since v${version}`);
           for (let i2 = 0; i2 < children2.length; i2++) {
             this.addChild(children2[i2]);
           }
+        }
+        reset() {
+          this.renderGroupChildren.length = 0;
+          for (const i2 in this.childrenToUpdate) {
+            const childrenAtDepth = this.childrenToUpdate[i2];
+            childrenAtDepth.list.fill(null);
+            childrenAtDepth.index = 0;
+          }
+          this.childrenRenderablesToUpdate.index = 0;
+          this.childrenRenderablesToUpdate.list.fill(null);
+          this.root = null;
+          this.updateTick = 0;
+          this.structureDidChange = true;
+          this._onRenderContainers.length = 0;
+          this.renderGroupParent = null;
         }
         get localTransform() {
           return this.root.localTransform;
@@ -3489,12 +3589,11 @@ Deprecated since v${version}`);
           }
           childrenToUpdate.list[childrenToUpdate.index++] = child;
         }
-        // SHOULD THIS BE HERE?
-        updateRenderable(container) {
-          if (container.globalDisplayStatus < 7)
+        updateRenderable(renderable) {
+          if (renderable.globalDisplayStatus < 7)
             return;
-          container.didViewUpdate = false;
-          this.instructionSet.renderPipes[container.renderPipeId].updateRenderable(container);
+          this.instructionSet.renderPipes[renderable.renderPipeId].updateRenderable(renderable);
+          renderable.didViewUpdate = false;
         }
         onChildViewUpdate(child) {
           this.childrenRenderablesToUpdate.list[this.childrenRenderablesToUpdate.index++] = child;
@@ -3574,6 +3673,7 @@ Deprecated since v${version}`);
       init_ObservablePoint();
       init_uid();
       init_deprecation();
+      init_PoolGroup();
       init_childrenHelperMixin();
       init_effectsMixin();
       init_findMixin();
@@ -3628,15 +3728,16 @@ Deprecated since v${version}`);
           this.groupBlendMode = "normal";
           this.localDisplayStatus = 7;
           this.globalDisplayStatus = 7;
-          this._didChangeId = 0;
+          this._didContainerChangeTick = 0;
+          this._didViewChangeTick = 0;
           this._didLocalTransformChangeId = -1;
+          this.effects = [];
           assignWithIgnore(this, options, {
             children: true,
             parent: true,
             effects: true
           });
           options.children?.forEach((child) => this.addChild(child));
-          this.effects = [];
           options.parent?.addChild(this);
         }
         /**
@@ -3645,6 +3746,18 @@ Deprecated since v${version}`);
          */
         static mixin(source2) {
           Object.defineProperties(Container.prototype, Object.getOwnPropertyDescriptors(source2));
+        }
+        /**
+         * We now use the _didContainerChangeTick and _didViewChangeTick to track changes
+         * @deprecated since 8.2.6
+         * @ignore
+         */
+        set _didChangeId(value) {
+          this._didViewChangeTick = value >> 12 & 4095;
+          this._didContainerChangeTick = value & 4095;
+        }
+        get _didChangeId() {
+          return this._didContainerChangeTick & 4095 | (this._didViewChangeTick & 4095) << 12;
         }
         /**
          * Adds one or more children to the container.
@@ -3680,7 +3793,6 @@ Deprecated since v${version}`);
             this.sortDirty = true;
           child.parent = this;
           child.didChange = true;
-          child.didViewUpdate = false;
           child._updateFlags = 15;
           const renderGroup = this.renderGroup || this.parentRenderGroup;
           if (renderGroup) {
@@ -3688,7 +3800,7 @@ Deprecated since v${version}`);
           }
           this.emit("childAdded", child, this, this.children.length - 1);
           child.emit("added", this);
-          this._didChangeId += 1 << 12;
+          this._didViewChangeTick++;
           if (child._zIndex !== 0) {
             child.depthOfChildModified();
           }
@@ -3709,7 +3821,7 @@ Deprecated since v${version}`);
           const child = children2[0];
           const index = this.children.indexOf(child);
           if (index > -1) {
-            this._didChangeId += 1 << 12;
+            this._didViewChangeTick++;
             this.children.splice(index, 1);
             if (this.renderGroup) {
               this.renderGroup.removeChild(child);
@@ -3729,7 +3841,7 @@ Deprecated since v${version}`);
               this._updateSkew();
             }
           }
-          this._didChangeId++;
+          this._didContainerChangeTick++;
           if (this.didChange)
             return;
           this.didChange = true;
@@ -3738,11 +3850,12 @@ Deprecated since v${version}`);
           }
         }
         set isRenderGroup(value) {
-          if (this.renderGroup && value === false) {
-            throw new Error("[Pixi] cannot undo a render group just yet");
-          }
+          if (!!this.renderGroup === value)
+            return;
           if (value) {
             this.enableRenderGroup();
+          } else {
+            this.disableRenderGroup();
           }
         }
         /**
@@ -3752,20 +3865,32 @@ Deprecated since v${version}`);
         get isRenderGroup() {
           return !!this.renderGroup;
         }
-        /** This enables the container to be rendered as a render group. */
+        /**
+         * Calling this enables a render group for this container.
+         * This means it will be rendered as a separate set of instructions.
+         * The transform of the container will also be handled on the GPU rather than the CPU.
+         */
         enableRenderGroup() {
           if (this.renderGroup)
             return;
           const parentRenderGroup = this.parentRenderGroup;
-          if (parentRenderGroup) {
-            parentRenderGroup.removeChild(this);
-          }
-          this.renderGroup = new RenderGroup(this);
-          if (parentRenderGroup) {
-            parentRenderGroup.addChild(this);
-          }
-          this._updateIsSimple();
+          parentRenderGroup?.removeChild(this);
+          this.renderGroup = BigPool.get(RenderGroup, this);
           this.groupTransform = Matrix.IDENTITY;
+          parentRenderGroup?.addChild(this);
+          this._updateIsSimple();
+        }
+        /** This will disable the render group for this container. */
+        disableRenderGroup() {
+          if (!this.renderGroup)
+            return;
+          const parentRenderGroup = this.parentRenderGroup;
+          parentRenderGroup?.removeChild(this);
+          BigPool.return(this.renderGroup);
+          this.renderGroup = null;
+          this.groupTransform = this.relativeGroupTransform;
+          parentRenderGroup?.addChild(this);
+          this._updateIsSimple();
         }
         /** @ignore */
         _updateIsSimple() {
@@ -3938,21 +4063,14 @@ Deprecated since v${version}`);
          */
         setSize(value, height) {
           const size = this.getLocalBounds();
-          let convertedWidth;
-          let convertedHeight;
-          if (typeof value !== "object") {
-            convertedWidth = value;
-            convertedHeight = height ?? value;
+          if (typeof value === "object") {
+            height = value.height ?? value.width;
+            value = value.width;
           } else {
-            convertedWidth = value.width;
-            convertedHeight = value.height ?? value.width;
+            height ?? (height = value);
           }
-          if (convertedWidth !== void 0) {
-            this._setWidth(convertedWidth, size.width);
-          }
-          if (convertedHeight !== void 0) {
-            this._setHeight(convertedHeight, size.height);
-          }
+          value !== void 0 && this._setWidth(value, size.width);
+          height !== void 0 && this._setHeight(height, size.height);
         }
         /** Called when the skew or the rotation changes. */
         _updateSkew() {
@@ -4005,9 +4123,10 @@ Deprecated since v${version}`);
         }
         /** Updates the local transform. */
         updateLocalTransform() {
-          if ((this._didLocalTransformChangeId & 15) === this._didChangeId)
+          const localTransformChangeId = this._didContainerChangeTick;
+          if (this._didLocalTransformChangeId === localTransformChangeId)
             return;
-          this._didLocalTransformChangeId = this._didChangeId;
+          this._didLocalTransformChangeId = localTransformChangeId;
           const lt = this.localTransform;
           const scale = this._scale;
           const pivot = this._pivot;
@@ -4078,8 +4197,8 @@ Deprecated since v${version}`);
           return !!(this.localDisplayStatus & 2);
         }
         set visible(value) {
-          const valueNumber = value ? 1 : 0;
-          if ((this.localDisplayStatus & 2) >> 1 === valueNumber)
+          const valueNumber = value ? 2 : 0;
+          if ((this.localDisplayStatus & 2) === valueNumber)
             return;
           if (this.parentRenderGroup) {
             this.parentRenderGroup.structureDidChange = true;
@@ -4094,8 +4213,8 @@ Deprecated since v${version}`);
         }
         /** @ignore */
         set culled(value) {
-          const valueNumber = value ? 1 : 0;
-          if ((this.localDisplayStatus & 4) >> 2 === valueNumber)
+          const valueNumber = value ? 0 : 4;
+          if ((this.localDisplayStatus & 4) === valueNumber)
             return;
           if (this.parentRenderGroup) {
             this.parentRenderGroup.structureDidChange = true;
@@ -4141,7 +4260,10 @@ Deprecated since v${version}`);
           if (this.destroyed)
             return;
           this.destroyed = true;
-          const oldChildren = this.removeChildren(0, this.children.length);
+          let oldChildren;
+          if (this.children.length) {
+            oldChildren = this.removeChildren(0, this.children.length);
+          }
           this.removeFromParent();
           this.parent = null;
           this._maskEffect = null;
@@ -4154,7 +4276,7 @@ Deprecated since v${version}`);
           this.emit("destroyed", this);
           this.removeAllListeners();
           const destroyChildren = typeof options === "boolean" ? options : options?.children;
-          if (destroyChildren) {
+          if (destroyChildren && oldChildren) {
             for (let i2 = 0; i2 < oldChildren.length; ++i2) {
               oldChildren[i2].destroy(options);
             }
@@ -5579,7 +5701,9 @@ Deprecated since v${version}`);
           }
           globalThis.document.dispatchEvent(new PointerEvent("pointermove", {
             clientX: rootPointerEvent.clientX,
-            clientY: rootPointerEvent.clientY
+            clientY: rootPointerEvent.clientY,
+            pointerType: rootPointerEvent.pointerType,
+            pointerId: rootPointerEvent.pointerId
           }));
         }
         /**
@@ -6125,6 +6249,9 @@ Deprecated since v${version}`);
          * @param type - The type of event to notify. Defaults to `e.type`.
          */
         notifyTarget(e2, type) {
+          if (!e2.currentTarget.isInteractive()) {
+            return;
+          }
           type = type ?? e2.type;
           const handlerKey = `on${type}`;
           e2.currentTarget[handlerKey]?.(e2);
@@ -6645,6 +6772,7 @@ Deprecated since v${version}`);
           const event = this.eventPool.get(constructor).pop() || new constructor(this);
           event.eventPhase = event.NONE;
           event.currentTarget = null;
+          event.defaultPrevented = false;
           event.path = null;
           event.target = null;
           return event;
@@ -6678,8 +6806,6 @@ Deprecated since v${version}`);
         _notifyListeners(e2, type) {
           const listeners = e2.currentTarget._events[type];
           if (!listeners)
-            return;
-          if (!e2.currentTarget.isInteractive())
             return;
           if ("fn" in listeners) {
             if (listeners.once)
@@ -9653,13 +9779,13 @@ Deprecated since v${version}`);
           const texBase = tex.source;
           const frame = this.uClampFrame;
           const margin = this.clampMargin / texBase._resolution;
-          const offset = this.clampOffset;
+          const offset = this.clampOffset / texBase._resolution;
           frame[0] = (tex.frame.x + margin + offset) / texBase.width;
           frame[1] = (tex.frame.y + margin + offset) / texBase.height;
           frame[2] = (tex.frame.x + tex.frame.width - margin + offset) / texBase.width;
           frame[3] = (tex.frame.y + tex.frame.height - margin + offset) / texBase.height;
-          this.uClampOffset[0] = offset / texBase.pixelWidth;
-          this.uClampOffset[1] = offset / texBase.pixelHeight;
+          this.uClampOffset[0] = this.clampOffset / texBase.pixelWidth;
+          this.uClampOffset[1] = this.clampOffset / texBase.pixelHeight;
           this.isSimple = tex.frame.width === texBase.width && tex.frame.height === texBase.height && tex.rotate === 0;
           return true;
         }
@@ -9682,7 +9808,7 @@ Deprecated since v${version}`);
       init_TextureMatrix();
       Texture = class extends eventemitter3_default {
         /**
-         * @param {TextureOptions} param0 - Options for the texture
+         * @param {rendering.TextureOptions} options - Options for the texture
          */
         constructor({
           source: source2,
@@ -9801,7 +9927,11 @@ Deprecated since v${version}`);
           this.emit("destroy", this);
           this.removeAllListeners();
         }
-        /** call this if you have modified the `texture outside` of the constructor */
+        /**
+         * Call this if you have modified the `texture outside` of the constructor.
+         *
+         * If you have modified this texture's source, you must separately call `texture.source.update()` to see those changes.
+         */
         update() {
           if (this.noFrame) {
             this.frame.width = this._source.width;
@@ -10184,6 +10314,64 @@ Deprecated since v${version}`);
     }
   });
 
+  // ../core/node_modules/pixi.js/lib/scene/view/ViewContainer.mjs
+  var ViewContainer;
+  var init_ViewContainer = __esm({
+    "../core/node_modules/pixi.js/lib/scene/view/ViewContainer.mjs"() {
+      init_Bounds();
+      init_Container();
+      ViewContainer = class extends Container {
+        constructor() {
+          super(...arguments);
+          this.canBundle = true;
+          this.allowChildren = false;
+          this._roundPixels = 0;
+          this._lastUsed = 0;
+          this._lastInstructionTick = -1;
+          this._bounds = new Bounds(0, 1, 0, 0);
+          this._boundsDirty = true;
+        }
+        /** @private */
+        _updateBounds() {
+        }
+        /**
+         * Whether or not to round the x/y position of the sprite.
+         * @type {boolean}
+         */
+        get roundPixels() {
+          return !!this._roundPixels;
+        }
+        set roundPixels(value) {
+          this._roundPixels = value ? 1 : 0;
+        }
+        /**
+         * Checks if the object contains the given point.
+         * @param point - The point to check
+         */
+        containsPoint(point) {
+          const bounds = this.bounds;
+          const { x: x2, y: y2 } = point;
+          return x2 >= bounds.minX && x2 <= bounds.maxX && y2 >= bounds.minY && y2 <= bounds.maxY;
+        }
+        /** @private */
+        onViewUpdate() {
+          this._didViewChangeTick++;
+          if (this.didViewUpdate)
+            return;
+          this.didViewUpdate = true;
+          const renderGroup = this.renderGroup || this.parentRenderGroup;
+          if (renderGroup) {
+            renderGroup.onChildViewUpdate(this);
+          }
+        }
+        destroy(options) {
+          super.destroy(options);
+          this._bounds = null;
+        }
+      };
+    }
+  });
+
   // ../core/node_modules/pixi.js/lib/scene/sprite/Sprite.mjs
   var Sprite;
   var init_Sprite = __esm({
@@ -10191,8 +10379,8 @@ Deprecated since v${version}`);
       init_ObservablePoint();
       init_Texture();
       init_updateQuadBounds();
-      init_Container();
-      Sprite = class extends Container {
+      init_ViewContainer();
+      Sprite = class extends ViewContainer {
         /**
          * @param options - The options for creating the sprite.
          */
@@ -10207,12 +10395,8 @@ Deprecated since v${version}`);
           });
           this.renderPipeId = "sprite";
           this.batched = true;
-          this._didSpriteUpdate = false;
-          this._bounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
           this._sourceBounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
-          this._boundsDirty = true;
           this._sourceBoundsDirty = true;
-          this._roundPixels = 0;
           this._anchor = new ObservablePoint(
             {
               _onUpdate: () => {
@@ -10228,9 +10412,9 @@ Deprecated since v${version}`);
           this.texture = texture;
           this.allowChildren = false;
           this.roundPixels = roundPixels ?? false;
-          if (width)
+          if (width !== void 0)
             this.width = width;
-          if (height)
+          if (height !== void 0)
             this.height = height;
         }
         /**
@@ -10312,16 +10496,8 @@ Deprecated since v${version}`);
           bounds.addFrame(_bounds.minX, _bounds.minY, _bounds.maxX, _bounds.maxY);
         }
         onViewUpdate() {
-          this._didChangeId += 1 << 12;
-          this._didSpriteUpdate = true;
           this._sourceBoundsDirty = this._boundsDirty = true;
-          if (this.didViewUpdate)
-            return;
-          this.didViewUpdate = true;
-          const renderGroup = this.renderGroup || this.parentRenderGroup;
-          if (renderGroup) {
-            renderGroup.onChildViewUpdate(this);
-          }
+          super.onViewUpdate();
         }
         _updateBounds() {
           updateQuadBounds(this._bounds, this._anchor, this._texture, 0);
@@ -10378,16 +10554,6 @@ Deprecated since v${version}`);
         set anchor(value) {
           typeof value === "number" ? this._anchor.set(value) : this._anchor.copyFrom(value);
         }
-        /**
-         *  Whether or not to round the x/y position of the sprite.
-         * @type {boolean}
-         */
-        get roundPixels() {
-          return !!this._roundPixels;
-        }
-        set roundPixels(value) {
-          this._roundPixels = value ? 1 : 0;
-        }
         /** The width of the sprite, setting this will actually modify the scale to achieve the value set. */
         get width() {
           return Math.abs(this.scale.x) * this._texture.orig.width;
@@ -10411,9 +10577,7 @@ Deprecated since v${version}`);
          * @returns - The size of the Sprite.
          */
         getSize(out2) {
-          if (!out2) {
-            out2 = {};
-          }
+          out2 || (out2 = {});
           out2.width = Math.abs(this.scale.x) * this._texture.orig.width;
           out2.height = Math.abs(this.scale.y) * this._texture.orig.height;
           return out2;
@@ -10425,21 +10589,14 @@ Deprecated since v${version}`);
          * @param height - The height to set. Defaults to the value of `width` if not provided.
          */
         setSize(value, height) {
-          let convertedWidth;
-          let convertedHeight;
-          if (typeof value !== "object") {
-            convertedWidth = value;
-            convertedHeight = height ?? value;
+          if (typeof value === "object") {
+            height = value.height ?? value.width;
+            value = value.width;
           } else {
-            convertedWidth = value.width;
-            convertedHeight = value.height ?? value.width;
+            height ?? (height = value);
           }
-          if (convertedWidth !== void 0) {
-            this._setWidth(convertedWidth, this._texture.orig.width);
-          }
-          if (convertedHeight !== void 0) {
-            this._setHeight(convertedHeight, this._texture.orig.height);
-          }
+          value !== void 0 && this._setWidth(value, this._texture.orig.width);
+          height !== void 0 && this._setHeight(height, this._texture.orig.height);
         }
       };
     }
@@ -10505,6 +10662,7 @@ Deprecated since v${version}`);
       AlphaMask = class {
         constructor(options) {
           this.priority = 0;
+          this.inverse = false;
           this.pipe = "alphaMask";
           if (options?.mask) {
             this.init(options.mask);
@@ -10522,7 +10680,9 @@ Deprecated since v${version}`);
           this.mask = null;
         }
         addBounds(bounds, skipUpdateTransform) {
-          addMaskBounds(this.mask, bounds, skipUpdateTransform);
+          if (!this.inverse) {
+            addMaskBounds(this.mask, bounds, skipUpdateTransform);
+          }
         }
         addLocalBounds(bounds, localRoot) {
           addMaskLocalBounds(this.mask, bounds, localRoot);
@@ -10668,6 +10828,14 @@ Deprecated since v${version}`);
         static test(resource) {
           return globalThis.HTMLCanvasElement && resource instanceof HTMLCanvasElement || globalThis.OffscreenCanvas && resource instanceof OffscreenCanvas;
         }
+        /**
+         * Returns the 2D rendering context for the canvas.
+         * Caches the context after creating it.
+         * @returns The 2D rendering context of the canvas.
+         */
+        get context2D() {
+          return this._context2D || (this._context2D = this.resource.getContext("2d"));
+        }
       };
       CanvasSource.extension = ExtensionType.TextureSource;
     }
@@ -10686,7 +10854,7 @@ Deprecated since v${version}`);
           if (options.resource && (globalThis.HTMLImageElement && options.resource instanceof HTMLImageElement)) {
             const canvas = DOMAdapter.get().createCanvas(options.resource.width, options.resource.height);
             const context4 = canvas.getContext("2d");
-            context4.drawImage(options.resource, 0, 0);
+            context4.drawImage(options.resource, 0, 0, options.resource.width, options.resource.height);
             options.resource = canvas;
             warn("ImageSource: Image element passed, converting to canvas. Use CanvasSource instead.");
           }
@@ -10695,7 +10863,7 @@ Deprecated since v${version}`);
           this.autoGarbageCollect = true;
         }
         static test(resource) {
-          return globalThis.HTMLImageElement && resource instanceof HTMLImageElement || typeof ImageBitmap !== "undefined" && resource instanceof ImageBitmap;
+          return globalThis.HTMLImageElement && resource instanceof HTMLImageElement || typeof ImageBitmap !== "undefined" && resource instanceof ImageBitmap || globalThis.VideoFrame && resource instanceof VideoFrame;
         }
       };
       ImageSource.extension = ExtensionType.TextureSource;
@@ -11040,7 +11208,7 @@ Deprecated since v${version}`);
           }
         }
         static test(resource) {
-          return globalThis.HTMLVideoElement && resource instanceof HTMLVideoElement || globalThis.VideoFrame && resource instanceof VideoFrame;
+          return globalThis.HTMLVideoElement && resource instanceof HTMLVideoElement;
         }
       };
       _VideoSource.extension = ExtensionType.TextureSource;
@@ -11174,7 +11342,7 @@ Deprecated since v${version}`);
   });
 
   // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/utils/textureFrom.mjs
-  function autoDetectSource(options = {}) {
+  function textureSourceFrom(options = {}) {
     const hasResource = options && options.resource;
     const res = hasResource ? options.resource : options;
     const opts = hasResource ? options : { resource: options };
@@ -11193,7 +11361,7 @@ Deprecated since v${version}`);
     if (!skipCache && Cache.has(resource)) {
       return Cache.get(resource);
     }
-    const texture = new Texture({ source: autoDetectSource(opts) });
+    const texture = new Texture({ source: textureSourceFrom(opts) });
     texture.on("destroy", () => {
       if (Cache.has(resource)) {
         Cache.remove(resource);
@@ -11222,6 +11390,7 @@ Deprecated since v${version}`);
       sources = [];
       extensions.handleByList(ExtensionType.TextureSource, sources);
       Texture.from = textureFrom;
+      TextureSource.from = textureSourceFrom;
     }
   });
 
@@ -11238,387 +11407,6 @@ Deprecated since v${version}`);
       init_VideoSource();
       init_textureFrom();
       extensions.add(AlphaMask, ColorMask, StencilMask, VideoSource, ImageSource, CanvasSource, BufferImageSource);
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/const.mjs
-  var BufferUsage;
-  var init_const3 = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/const.mjs"() {
-      "use strict";
-      BufferUsage = /* @__PURE__ */ ((BufferUsage2) => {
-        BufferUsage2[BufferUsage2["MAP_READ"] = 1] = "MAP_READ";
-        BufferUsage2[BufferUsage2["MAP_WRITE"] = 2] = "MAP_WRITE";
-        BufferUsage2[BufferUsage2["COPY_SRC"] = 4] = "COPY_SRC";
-        BufferUsage2[BufferUsage2["COPY_DST"] = 8] = "COPY_DST";
-        BufferUsage2[BufferUsage2["INDEX"] = 16] = "INDEX";
-        BufferUsage2[BufferUsage2["VERTEX"] = 32] = "VERTEX";
-        BufferUsage2[BufferUsage2["UNIFORM"] = 64] = "UNIFORM";
-        BufferUsage2[BufferUsage2["STORAGE"] = 128] = "STORAGE";
-        BufferUsage2[BufferUsage2["INDIRECT"] = 256] = "INDIRECT";
-        BufferUsage2[BufferUsage2["QUERY_RESOLVE"] = 512] = "QUERY_RESOLVE";
-        BufferUsage2[BufferUsage2["STATIC"] = 1024] = "STATIC";
-        return BufferUsage2;
-      })(BufferUsage || {});
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/Buffer.mjs
-  var Buffer2;
-  var init_Buffer = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/Buffer.mjs"() {
-      init_eventemitter3();
-      init_uid();
-      init_const3();
-      Buffer2 = class extends eventemitter3_default {
-        /**
-         * Creates a new Buffer with the given options
-         * @param options - the options for the buffer
-         */
-        constructor(options) {
-          let { data, size } = options;
-          const { usage, label, shrinkToFit } = options;
-          super();
-          this.uid = uid("buffer");
-          this._resourceType = "buffer";
-          this._resourceId = uid("resource");
-          this._touched = 0;
-          this._updateID = 1;
-          this.shrinkToFit = true;
-          this.destroyed = false;
-          if (data instanceof Array) {
-            data = new Float32Array(data);
-          }
-          this._data = data;
-          size = size ?? data?.byteLength;
-          const mappedAtCreation = !!data;
-          this.descriptor = {
-            size,
-            usage,
-            mappedAtCreation,
-            label
-          };
-          this.shrinkToFit = shrinkToFit ?? true;
-        }
-        /** the data in the buffer */
-        get data() {
-          return this._data;
-        }
-        set data(value) {
-          this.setDataWithSize(value, value.length, true);
-        }
-        /** whether the buffer is static or not */
-        get static() {
-          return !!(this.descriptor.usage & BufferUsage.STATIC);
-        }
-        set static(value) {
-          if (value) {
-            this.descriptor.usage |= BufferUsage.STATIC;
-          } else {
-            this.descriptor.usage &= ~BufferUsage.STATIC;
-          }
-        }
-        /**
-         * Sets the data in the buffer to the given value. This will immediately update the buffer on the GPU.
-         * If you only want to update a subset of the buffer, you can pass in the size of the data.
-         * @param value - the data to set
-         * @param size - the size of the data in bytes
-         * @param syncGPU - should the buffer be updated on the GPU immediately?
-         */
-        setDataWithSize(value, size, syncGPU) {
-          this._updateID++;
-          this._updateSize = size * value.BYTES_PER_ELEMENT;
-          if (this._data === value) {
-            if (syncGPU)
-              this.emit("update", this);
-            return;
-          }
-          const oldData = this._data;
-          this._data = value;
-          if (oldData.length !== value.length) {
-            if (!this.shrinkToFit && value.byteLength < oldData.byteLength) {
-              if (syncGPU)
-                this.emit("update", this);
-            } else {
-              this.descriptor.size = value.byteLength;
-              this._resourceId = uid("resource");
-              this.emit("change", this);
-            }
-            return;
-          }
-          if (syncGPU)
-            this.emit("update", this);
-        }
-        /**
-         * updates the buffer on the GPU to reflect the data in the buffer.
-         * By default it will update the entire buffer. If you only want to update a subset of the buffer,
-         * you can pass in the size of the buffer to update.
-         * @param sizeInBytes - the new size of the buffer in bytes
-         */
-        update(sizeInBytes) {
-          this._updateSize = sizeInBytes ?? this._updateSize;
-          this._updateID++;
-          this.emit("update", this);
-        }
-        /** Destroys the buffer */
-        destroy() {
-          this.destroyed = true;
-          this.emit("destroy", this);
-          this.emit("change", this);
-          this._data = null;
-          this.descriptor = null;
-          this.removeAllListeners();
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/ensureIsBuffer.mjs
-  function ensureIsBuffer(buffer, index) {
-    if (!(buffer instanceof Buffer2)) {
-      let usage = index ? BufferUsage.INDEX : BufferUsage.VERTEX;
-      if (buffer instanceof Array) {
-        if (index) {
-          buffer = new Uint32Array(buffer);
-          usage = BufferUsage.INDEX | BufferUsage.COPY_DST;
-        } else {
-          buffer = new Float32Array(buffer);
-          usage = BufferUsage.VERTEX | BufferUsage.COPY_DST;
-        }
-      }
-      buffer = new Buffer2({
-        data: buffer,
-        label: index ? "index-mesh-buffer" : "vertex-mesh-buffer",
-        usage
-      });
-    }
-    return buffer;
-  }
-  var init_ensureIsBuffer = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/ensureIsBuffer.mjs"() {
-      init_Buffer();
-      init_const3();
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getGeometryBounds.mjs
-  function getGeometryBounds(geometry, attributeId, bounds) {
-    const attribute = geometry.getAttribute(attributeId);
-    if (!attribute) {
-      bounds.minX = 0;
-      bounds.minY = 0;
-      bounds.maxX = 0;
-      bounds.maxY = 0;
-      return bounds;
-    }
-    const data = attribute.buffer.data;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    const byteSize = data.BYTES_PER_ELEMENT;
-    const offset = (attribute.offset || 0) / byteSize;
-    const stride = (attribute.stride || 2 * 4) / byteSize;
-    for (let i2 = offset; i2 < data.length; i2 += stride) {
-      const x2 = data[i2];
-      const y2 = data[i2 + 1];
-      if (x2 > maxX)
-        maxX = x2;
-      if (y2 > maxY)
-        maxY = y2;
-      if (x2 < minX)
-        minX = x2;
-      if (y2 < minY)
-        minY = y2;
-    }
-    bounds.minX = minX;
-    bounds.minY = minY;
-    bounds.maxX = maxX;
-    bounds.maxY = maxY;
-    return bounds;
-  }
-  var init_getGeometryBounds = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getGeometryBounds.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/Geometry.mjs
-  function ensureIsAttribute(attribute) {
-    if (attribute instanceof Buffer2 || Array.isArray(attribute) || attribute.BYTES_PER_ELEMENT) {
-      attribute = {
-        buffer: attribute
-      };
-    }
-    attribute.buffer = ensureIsBuffer(attribute.buffer, false);
-    return attribute;
-  }
-  var Geometry;
-  var init_Geometry = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/Geometry.mjs"() {
-      init_eventemitter3();
-      init_Bounds();
-      init_uid();
-      init_Buffer();
-      init_ensureIsBuffer();
-      init_getGeometryBounds();
-      Geometry = class extends eventemitter3_default {
-        /**
-         * Create a new instance of a geometry
-         * @param options - The options for the geometry.
-         */
-        constructor(options) {
-          const { attributes, indexBuffer, topology } = options;
-          super();
-          this.uid = uid("geometry");
-          this._layoutKey = 0;
-          this.instanceCount = 1;
-          this._bounds = new Bounds();
-          this._boundsDirty = true;
-          this.attributes = attributes;
-          this.buffers = [];
-          this.instanceCount = options.instanceCount || 1;
-          for (const i2 in attributes) {
-            const attribute = attributes[i2] = ensureIsAttribute(attributes[i2]);
-            const bufferIndex = this.buffers.indexOf(attribute.buffer);
-            if (bufferIndex === -1) {
-              this.buffers.push(attribute.buffer);
-              attribute.buffer.on("update", this.onBufferUpdate, this);
-              attribute.buffer.on("change", this.onBufferUpdate, this);
-            }
-          }
-          if (indexBuffer) {
-            this.indexBuffer = ensureIsBuffer(indexBuffer, true);
-            this.buffers.push(this.indexBuffer);
-          }
-          this.topology = topology || "triangle-list";
-        }
-        onBufferUpdate() {
-          this._boundsDirty = true;
-          this.emit("update", this);
-        }
-        /**
-         * Returns the requested attribute.
-         * @param id - The name of the attribute required
-         * @returns - The attribute requested.
-         */
-        getAttribute(id) {
-          return this.attributes[id];
-        }
-        /**
-         * Returns the index buffer
-         * @returns - The index buffer.
-         */
-        getIndex() {
-          return this.indexBuffer;
-        }
-        /**
-         * Returns the requested buffer.
-         * @param id - The name of the buffer required.
-         * @returns - The buffer requested.
-         */
-        getBuffer(id) {
-          return this.getAttribute(id).buffer;
-        }
-        /**
-         * Used to figure out how many vertices there are in this geometry
-         * @returns the number of vertices in the geometry
-         */
-        getSize() {
-          for (const i2 in this.attributes) {
-            const attribute = this.attributes[i2];
-            const buffer = attribute.buffer;
-            return buffer.data.length / (attribute.stride / 4 || attribute.size);
-          }
-          return 0;
-        }
-        /** Returns the bounds of the geometry. */
-        get bounds() {
-          if (!this._boundsDirty)
-            return this._bounds;
-          this._boundsDirty = false;
-          return getGeometryBounds(this, "aPosition", this._bounds);
-        }
-        /**
-         * destroys the geometry.
-         * @param destroyBuffers - destroy the buffers associated with this geometry
-         */
-        destroy(destroyBuffers = false) {
-          this.emit("destroy", this);
-          this.removeAllListeners();
-          if (destroyBuffers) {
-            this.buffers.forEach((buffer) => buffer.destroy());
-          }
-          this.attributes = null;
-          this.buffers = null;
-          this.indexBuffer = null;
-          this._bounds = null;
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/batcher/gpu/BatchGeometry.mjs
-  var placeHolderBufferData, placeHolderIndexData, BatchGeometry;
-  var init_BatchGeometry = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/batcher/gpu/BatchGeometry.mjs"() {
-      init_Buffer();
-      init_const3();
-      init_Geometry();
-      placeHolderBufferData = new Float32Array(1);
-      placeHolderIndexData = new Uint32Array(1);
-      BatchGeometry = class extends Geometry {
-        constructor() {
-          const vertexSize = 6;
-          const attributeBuffer = new Buffer2({
-            data: placeHolderBufferData,
-            label: "attribute-batch-buffer",
-            usage: BufferUsage.VERTEX | BufferUsage.COPY_DST,
-            shrinkToFit: false
-          });
-          const indexBuffer = new Buffer2({
-            data: placeHolderIndexData,
-            label: "index-batch-buffer",
-            usage: BufferUsage.INDEX | BufferUsage.COPY_DST,
-            // | BufferUsage.STATIC,
-            shrinkToFit: false
-          });
-          const stride = vertexSize * 4;
-          super({
-            attributes: {
-              aPosition: {
-                buffer: attributeBuffer,
-                format: "float32x2",
-                stride,
-                offset: 0,
-                location: 1
-              },
-              aUV: {
-                buffer: attributeBuffer,
-                format: "float32x2",
-                stride,
-                offset: 2 * 4,
-                location: 3
-              },
-              aColor: {
-                buffer: attributeBuffer,
-                format: "unorm8x4",
-                stride,
-                offset: 4 * 4,
-                location: 0
-              },
-              aTextureIdAndRound: {
-                buffer: attributeBuffer,
-                format: "uint16x2",
-                stride,
-                offset: 5 * 4,
-                location: 2
-              }
-            },
-            indexBuffer
-          });
-        }
-      };
     }
   });
 
@@ -11739,37 +11527,94 @@ Deprecated since v${version}`);
     }
   });
 
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/utils/maxRecommendedTextures.mjs
-  function maxRecommendedTextures() {
-    if (maxRecommendedTexturesCache)
-      return maxRecommendedTexturesCache;
-    const gl = getTestContext();
-    maxRecommendedTexturesCache = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
-    return maxRecommendedTexturesCache;
+  // ../core/node_modules/pixi.js/lib/rendering/batcher/gl/utils/checkMaxIfStatementsInShader.mjs
+  function generateIfTestSrc(maxIfs) {
+    let src = "";
+    for (let i2 = 0; i2 < maxIfs; ++i2) {
+      if (i2 > 0) {
+        src += "\nelse ";
+      }
+      if (i2 < maxIfs - 1) {
+        src += `if(test == ${i2}.0){}`;
+      }
+    }
+    return src;
   }
-  var maxRecommendedTexturesCache;
+  function checkMaxIfStatementsInShader(maxIfs, gl) {
+    if (maxIfs === 0) {
+      throw new Error("Invalid value of `0` passed to `checkMaxIfStatementsInShader`");
+    }
+    const shader = gl.createShader(gl.FRAGMENT_SHADER);
+    try {
+      while (true) {
+        const fragmentSrc = fragTemplate.replace(/%forloop%/gi, generateIfTestSrc(maxIfs));
+        gl.shaderSource(shader, fragmentSrc);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          maxIfs = maxIfs / 2 | 0;
+        } else {
+          break;
+        }
+      }
+    } finally {
+      gl.deleteShader(shader);
+    }
+    return maxIfs;
+  }
+  var fragTemplate;
+  var init_checkMaxIfStatementsInShader = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/batcher/gl/utils/checkMaxIfStatementsInShader.mjs"() {
+      "use strict";
+      fragTemplate = [
+        "precision mediump float;",
+        "void main(void){",
+        "float test = 0.1;",
+        "%forloop%",
+        "gl_FragColor = vec4(0.0);",
+        "}"
+      ].join("\n");
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/batcher/gl/utils/maxRecommendedTextures.mjs
+  function getMaxTexturesPerBatch() {
+    if (maxTexturesPerBatchCache)
+      return maxTexturesPerBatchCache;
+    const gl = getTestContext();
+    maxTexturesPerBatchCache = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+    maxTexturesPerBatchCache = checkMaxIfStatementsInShader(
+      maxTexturesPerBatchCache,
+      gl
+    );
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return maxTexturesPerBatchCache;
+  }
+  var maxTexturesPerBatchCache;
   var init_maxRecommendedTextures = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/utils/maxRecommendedTextures.mjs"() {
+    "../core/node_modules/pixi.js/lib/rendering/batcher/gl/utils/maxRecommendedTextures.mjs"() {
       init_getTestContext();
-      maxRecommendedTexturesCache = null;
+      init_checkMaxIfStatementsInShader();
+      maxTexturesPerBatchCache = null;
     }
   });
 
   // ../core/node_modules/pixi.js/lib/rendering/batcher/gpu/getTextureBatchBindGroup.mjs
   function getTextureBatchBindGroup(textures, size) {
-    let uid3 = 0;
+    let uid4 = 2166136261;
     for (let i2 = 0; i2 < size; i2++) {
-      uid3 = uid3 * 31 + textures[i2].uid >>> 0;
+      uid4 ^= textures[i2].uid;
+      uid4 = Math.imul(uid4, 16777619);
+      uid4 >>>= 0;
     }
-    return cachedGroups[uid3] || generateTextureBatchBindGroup(textures, uid3);
+    return cachedGroups[uid4] || generateTextureBatchBindGroup(textures, size, uid4);
   }
-  function generateTextureBatchBindGroup(textures, key) {
+  function generateTextureBatchBindGroup(textures, size, key) {
     const bindGroupResources = {};
     let bindIndex = 0;
     if (!maxTextures)
-      maxTextures = maxRecommendedTextures();
+      maxTextures = getMaxTexturesPerBatch();
     for (let i2 = 0; i2 < maxTextures; i2++) {
-      const texture = i2 < textures.length ? textures[i2] : Texture.EMPTY.source;
+      const texture = i2 < size ? textures[i2] : Texture.EMPTY.source;
       bindGroupResources[bindIndex++] = texture.source;
       bindGroupResources[bindIndex++] = texture.style;
     }
@@ -11915,7 +11760,7 @@ Deprecated since v${version}`);
 
   // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/state/const.mjs
   var BLEND_TO_NPM, STENCIL_MODES;
-  var init_const4 = __esm({
+  var init_const3 = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/shared/state/const.mjs"() {
       "use strict";
       BLEND_TO_NPM = {
@@ -11927,8 +11772,9 @@ Deprecated since v${version}`);
         STENCIL_MODES2[STENCIL_MODES2["DISABLED"] = 0] = "DISABLED";
         STENCIL_MODES2[STENCIL_MODES2["RENDERING_MASK_ADD"] = 1] = "RENDERING_MASK_ADD";
         STENCIL_MODES2[STENCIL_MODES2["MASK_ACTIVE"] = 2] = "MASK_ACTIVE";
-        STENCIL_MODES2[STENCIL_MODES2["RENDERING_MASK_REMOVE"] = 3] = "RENDERING_MASK_REMOVE";
-        STENCIL_MODES2[STENCIL_MODES2["NONE"] = 4] = "NONE";
+        STENCIL_MODES2[STENCIL_MODES2["INVERSE_MASK_ACTIVE"] = 3] = "INVERSE_MASK_ACTIVE";
+        STENCIL_MODES2[STENCIL_MODES2["RENDERING_MASK_REMOVE"] = 4] = "RENDERING_MASK_REMOVE";
+        STENCIL_MODES2[STENCIL_MODES2["NONE"] = 5] = "NONE";
         return STENCIL_MODES2;
       })(STENCIL_MODES || {});
     }
@@ -11943,7 +11789,7 @@ Deprecated since v${version}`);
   }
   var init_getAdjustedBlendModeBlend = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/shared/state/getAdjustedBlendModeBlend.mjs"() {
-      init_const4();
+      init_const3();
     }
   });
 
@@ -11972,7 +11818,13 @@ Deprecated since v${version}`);
   });
 
   // ../core/node_modules/pixi.js/lib/rendering/batcher/shared/Batcher.mjs
-  var Batch, BATCH_TICK, _Batcher, Batcher;
+  function getBatchFromPool() {
+    return batchPoolIndex > 0 ? batchPool[--batchPoolIndex] : new Batch();
+  }
+  function returnBatchToPool(batch) {
+    batchPool[batchPoolIndex++] = batch;
+  }
+  var Batch, batchPool, batchPoolIndex, BATCH_TICK, _Batcher, Batcher;
   var init_Batcher = __esm({
     "../core/node_modules/pixi.js/lib/rendering/batcher/shared/Batcher.mjs"() {
       init_uid();
@@ -11987,6 +11839,7 @@ Deprecated since v${version}`);
           this.action = "startBatch";
           this.start = 0;
           this.size = 0;
+          this.textures = new BatchTextureArray();
           this.blendMode = "normal";
           this.canBundle = true;
         }
@@ -11997,6 +11850,8 @@ Deprecated since v${version}`);
           this.batcher = null;
         }
       };
+      batchPool = [];
+      batchPoolIndex = 0;
       BATCH_TICK = 0;
       _Batcher = class _Batcher2 {
         constructor(options = {}) {
@@ -12004,54 +11859,63 @@ Deprecated since v${version}`);
           this.dirty = true;
           this.batchIndex = 0;
           this.batches = [];
-          this._vertexSize = 6;
           this._elements = [];
-          this._batchPool = [];
-          this._batchPoolIndex = 0;
-          this._textureBatchPool = [];
-          this._textureBatchPoolIndex = 0;
+          _Batcher2.defaultOptions.maxTextures = _Batcher2.defaultOptions.maxTextures ?? getMaxTexturesPerBatch();
           options = { ..._Batcher2.defaultOptions, ...options };
-          const { vertexSize, indexSize } = options;
-          this.attributeBuffer = new ViewableBuffer(vertexSize * this._vertexSize * 4);
-          this.indexBuffer = new Uint16Array(indexSize);
-          this._maxTextures = maxRecommendedTextures();
+          const { maxTextures: maxTextures2, attributesInitialSize, indicesInitialSize } = options;
+          this.attributeBuffer = new ViewableBuffer(attributesInitialSize * 4);
+          this.indexBuffer = new Uint16Array(indicesInitialSize);
+          this.maxTextures = maxTextures2;
         }
         begin() {
-          this.batchIndex = 0;
           this.elementSize = 0;
           this.elementStart = 0;
           this.indexSize = 0;
           this.attributeSize = 0;
-          this._batchPoolIndex = 0;
-          this._textureBatchPoolIndex = 0;
+          for (let i2 = 0; i2 < this.batchIndex; i2++) {
+            returnBatchToPool(this.batches[i2]);
+          }
+          this.batchIndex = 0;
           this._batchIndexStart = 0;
           this._batchIndexSize = 0;
           this.dirty = true;
         }
         add(batchableObject) {
           this._elements[this.elementSize++] = batchableObject;
-          batchableObject.indexStart = this.indexSize;
-          batchableObject.location = this.attributeSize;
-          batchableObject.batcher = this;
+          batchableObject._indexStart = this.indexSize;
+          batchableObject._attributeStart = this.attributeSize;
+          batchableObject._batcher = this;
           this.indexSize += batchableObject.indexSize;
-          this.attributeSize += batchableObject.vertexSize * this._vertexSize;
+          this.attributeSize += batchableObject.attributeSize * this.vertexSize;
         }
         checkAndUpdateTexture(batchableObject, texture) {
-          const textureId = batchableObject.batch.textures.ids[texture._source.uid];
+          const textureId = batchableObject._batch.textures.ids[texture._source.uid];
           if (!textureId && textureId !== 0)
             return false;
-          batchableObject.textureId = textureId;
+          batchableObject._textureId = textureId;
           batchableObject.texture = texture;
           return true;
         }
         updateElement(batchableObject) {
           this.dirty = true;
-          batchableObject.packAttributes(
-            this.attributeBuffer.float32View,
-            this.attributeBuffer.uint32View,
-            batchableObject.location,
-            batchableObject.textureId
-          );
+          const attributeBuffer = this.attributeBuffer;
+          if (batchableObject.packAsQuad) {
+            this.packQuadAttributes(
+              batchableObject,
+              attributeBuffer.float32View,
+              attributeBuffer.uint32View,
+              batchableObject._attributeStart,
+              batchableObject._textureId
+            );
+          } else {
+            this.packAttributes(
+              batchableObject,
+              attributeBuffer.float32View,
+              attributeBuffer.uint32View,
+              batchableObject._attributeStart,
+              batchableObject._textureId
+            );
+          }
         }
         /**
          * breaks the batcher. This happens when a batch gets too big,
@@ -12060,10 +11924,11 @@ Deprecated since v${version}`);
          */
         break(instructionSet) {
           const elements = this._elements;
-          let textureBatch = this._textureBatchPool[this._textureBatchPoolIndex++] || new BatchTextureArray();
-          textureBatch.clear();
           if (!elements[this.elementStart])
             return;
+          let batch = getBatchFromPool();
+          let textureBatch = batch.textures;
+          textureBatch.clear();
           const firstElement = elements[this.elementStart];
           let blendMode = getAdjustedBlendModeBlend(firstElement.blendMode, firstElement.texture._source);
           if (this.attributeSize * 4 > this.attributeBuffer.size) {
@@ -12074,29 +11939,54 @@ Deprecated since v${version}`);
           }
           const f32 = this.attributeBuffer.float32View;
           const u32 = this.attributeBuffer.uint32View;
-          const iBuffer = this.indexBuffer;
+          const indexBuffer = this.indexBuffer;
           let size = this._batchIndexSize;
           let start = this._batchIndexStart;
           let action = "startBatch";
-          let batch = this._batchPool[this._batchPoolIndex++] || new Batch();
-          const maxTextures2 = this._maxTextures;
+          const maxTextures2 = this.maxTextures;
           for (let i2 = this.elementStart; i2 < this.elementSize; ++i2) {
             const element2 = elements[i2];
             elements[i2] = null;
             const texture = element2.texture;
             const source2 = texture._source;
             const adjustedBlendMode = getAdjustedBlendModeBlend(element2.blendMode, source2);
-            const blendModeChange = blendMode !== adjustedBlendMode;
-            if (source2._batchTick === BATCH_TICK && !blendModeChange) {
-              element2.textureId = source2._textureBindLocation;
+            const breakRequired = blendMode !== adjustedBlendMode;
+            if (source2._batchTick === BATCH_TICK && !breakRequired) {
+              element2._textureId = source2._textureBindLocation;
               size += element2.indexSize;
-              element2.packAttributes(f32, u32, element2.location, element2.textureId);
-              element2.packIndex(iBuffer, element2.indexStart, element2.location / this._vertexSize);
-              element2.batch = batch;
+              if (element2.packAsQuad) {
+                this.packQuadAttributes(
+                  element2,
+                  f32,
+                  u32,
+                  element2._attributeStart,
+                  element2._textureId
+                );
+                this.packQuadIndex(
+                  indexBuffer,
+                  element2._indexStart,
+                  element2._attributeStart / this.vertexSize
+                );
+              } else {
+                this.packAttributes(
+                  element2,
+                  f32,
+                  u32,
+                  element2._attributeStart,
+                  element2._textureId
+                );
+                this.packIndex(
+                  element2,
+                  indexBuffer,
+                  element2._indexStart,
+                  element2._attributeStart / this.vertexSize
+                );
+              }
+              element2._batch = batch;
               continue;
             }
             source2._batchTick = BATCH_TICK;
-            if (textureBatch.count >= maxTextures2 || blendModeChange) {
+            if (textureBatch.count >= maxTextures2 || breakRequired) {
               this._finishBatch(
                 batch,
                 start,
@@ -12109,18 +11999,44 @@ Deprecated since v${version}`);
               action = "renderBatch";
               start = size;
               blendMode = adjustedBlendMode;
-              textureBatch = this._textureBatchPool[this._textureBatchPoolIndex++] || new BatchTextureArray();
+              batch = getBatchFromPool();
+              textureBatch = batch.textures;
               textureBatch.clear();
-              batch = this._batchPool[this._batchPoolIndex++] || new Batch();
               ++BATCH_TICK;
             }
-            element2.textureId = source2._textureBindLocation = textureBatch.count;
+            element2._textureId = source2._textureBindLocation = textureBatch.count;
             textureBatch.ids[source2.uid] = textureBatch.count;
             textureBatch.textures[textureBatch.count++] = source2;
-            element2.batch = batch;
+            element2._batch = batch;
             size += element2.indexSize;
-            element2.packAttributes(f32, u32, element2.location, element2.textureId);
-            element2.packIndex(iBuffer, element2.indexStart, element2.location / this._vertexSize);
+            if (element2.packAsQuad) {
+              this.packQuadAttributes(
+                element2,
+                f32,
+                u32,
+                element2._attributeStart,
+                element2._textureId
+              );
+              this.packQuadIndex(
+                indexBuffer,
+                element2._indexStart,
+                element2._attributeStart / this.vertexSize
+              );
+            } else {
+              this.packAttributes(
+                element2,
+                f32,
+                u32,
+                element2._attributeStart,
+                element2._textureId
+              );
+              this.packIndex(
+                element2,
+                indexBuffer,
+                element2._indexStart,
+                element2._attributeStart / this.vertexSize
+              );
+            }
           }
           if (textureBatch.count > 0) {
             this._finishBatch(
@@ -12141,6 +12057,7 @@ Deprecated since v${version}`);
         }
         _finishBatch(batch, indexStart, indexSize, textureBatch, blendMode, instructionSet, action) {
           batch.gpuBindGroup = null;
+          batch.bindGroup = null;
           batch.action = action;
           batch.batcher = this;
           batch.textures = textureBatch;
@@ -12148,6 +12065,7 @@ Deprecated since v${version}`);
           batch.start = indexStart;
           batch.size = indexSize;
           ++BATCH_TICK;
+          this.batches[this.batchIndex++] = batch;
           instructionSet.add(batch);
         }
         finish(instructionSet) {
@@ -12191,13 +12109,30 @@ Deprecated since v${version}`);
           }
           this.indexBuffer = newIndexBuffer;
         }
+        packQuadIndex(indexBuffer, index, indicesOffset) {
+          indexBuffer[index] = indicesOffset + 0;
+          indexBuffer[index + 1] = indicesOffset + 1;
+          indexBuffer[index + 2] = indicesOffset + 2;
+          indexBuffer[index + 3] = indicesOffset + 0;
+          indexBuffer[index + 4] = indicesOffset + 2;
+          indexBuffer[index + 5] = indicesOffset + 3;
+        }
+        packIndex(element2, indexBuffer, index, indicesOffset) {
+          const indices = element2.indices;
+          const size = element2.indexSize;
+          const indexOffset = element2.indexOffset;
+          const attributeOffset = element2.attributeOffset;
+          for (let i2 = 0; i2 < size; i2++) {
+            indexBuffer[index++] = indicesOffset + indices[i2 + indexOffset] - attributeOffset;
+          }
+        }
         destroy() {
           for (let i2 = 0; i2 < this.batches.length; i2++) {
-            this.batches[i2].destroy();
+            returnBatchToPool(this.batches[i2]);
           }
           this.batches = null;
           for (let i2 = 0; i2 < this._elements.length; i2++) {
-            this._elements[i2].batch = null;
+            this._elements[i2]._batch = null;
           }
           this._elements = null;
           this.indexBuffer = null;
@@ -12206,10 +12141,2122 @@ Deprecated since v${version}`);
         }
       };
       _Batcher.defaultOptions = {
-        vertexSize: 4,
-        indexSize: 6
+        maxTextures: null,
+        attributesInitialSize: 4,
+        indicesInitialSize: 6
       };
       Batcher = _Batcher;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/const.mjs
+  var BufferUsage;
+  var init_const4 = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/const.mjs"() {
+      "use strict";
+      BufferUsage = /* @__PURE__ */ ((BufferUsage2) => {
+        BufferUsage2[BufferUsage2["MAP_READ"] = 1] = "MAP_READ";
+        BufferUsage2[BufferUsage2["MAP_WRITE"] = 2] = "MAP_WRITE";
+        BufferUsage2[BufferUsage2["COPY_SRC"] = 4] = "COPY_SRC";
+        BufferUsage2[BufferUsage2["COPY_DST"] = 8] = "COPY_DST";
+        BufferUsage2[BufferUsage2["INDEX"] = 16] = "INDEX";
+        BufferUsage2[BufferUsage2["VERTEX"] = 32] = "VERTEX";
+        BufferUsage2[BufferUsage2["UNIFORM"] = 64] = "UNIFORM";
+        BufferUsage2[BufferUsage2["STORAGE"] = 128] = "STORAGE";
+        BufferUsage2[BufferUsage2["INDIRECT"] = 256] = "INDIRECT";
+        BufferUsage2[BufferUsage2["QUERY_RESOLVE"] = 512] = "QUERY_RESOLVE";
+        BufferUsage2[BufferUsage2["STATIC"] = 1024] = "STATIC";
+        return BufferUsage2;
+      })(BufferUsage || {});
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/Buffer.mjs
+  var Buffer2;
+  var init_Buffer = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/buffer/Buffer.mjs"() {
+      init_eventemitter3();
+      init_uid();
+      init_const4();
+      Buffer2 = class extends eventemitter3_default {
+        /**
+         * Creates a new Buffer with the given options
+         * @param options - the options for the buffer
+         */
+        constructor(options) {
+          let { data, size } = options;
+          const { usage, label, shrinkToFit } = options;
+          super();
+          this.uid = uid("buffer");
+          this._resourceType = "buffer";
+          this._resourceId = uid("resource");
+          this._touched = 0;
+          this._updateID = 1;
+          this.shrinkToFit = true;
+          this.destroyed = false;
+          if (data instanceof Array) {
+            data = new Float32Array(data);
+          }
+          this._data = data;
+          size = size ?? data?.byteLength;
+          const mappedAtCreation = !!data;
+          this.descriptor = {
+            size,
+            usage,
+            mappedAtCreation,
+            label
+          };
+          this.shrinkToFit = shrinkToFit ?? true;
+        }
+        /** the data in the buffer */
+        get data() {
+          return this._data;
+        }
+        set data(value) {
+          this.setDataWithSize(value, value.length, true);
+        }
+        /** whether the buffer is static or not */
+        get static() {
+          return !!(this.descriptor.usage & BufferUsage.STATIC);
+        }
+        set static(value) {
+          if (value) {
+            this.descriptor.usage |= BufferUsage.STATIC;
+          } else {
+            this.descriptor.usage &= ~BufferUsage.STATIC;
+          }
+        }
+        /**
+         * Sets the data in the buffer to the given value. This will immediately update the buffer on the GPU.
+         * If you only want to update a subset of the buffer, you can pass in the size of the data.
+         * @param value - the data to set
+         * @param size - the size of the data in bytes
+         * @param syncGPU - should the buffer be updated on the GPU immediately?
+         */
+        setDataWithSize(value, size, syncGPU) {
+          this._updateID++;
+          this._updateSize = size * value.BYTES_PER_ELEMENT;
+          if (this._data === value) {
+            if (syncGPU)
+              this.emit("update", this);
+            return;
+          }
+          const oldData = this._data;
+          this._data = value;
+          if (oldData.length !== value.length) {
+            if (!this.shrinkToFit && value.byteLength < oldData.byteLength) {
+              if (syncGPU)
+                this.emit("update", this);
+            } else {
+              this.descriptor.size = value.byteLength;
+              this._resourceId = uid("resource");
+              this.emit("change", this);
+            }
+            return;
+          }
+          if (syncGPU)
+            this.emit("update", this);
+        }
+        /**
+         * updates the buffer on the GPU to reflect the data in the buffer.
+         * By default it will update the entire buffer. If you only want to update a subset of the buffer,
+         * you can pass in the size of the buffer to update.
+         * @param sizeInBytes - the new size of the buffer in bytes
+         */
+        update(sizeInBytes) {
+          this._updateSize = sizeInBytes ?? this._updateSize;
+          this._updateID++;
+          this.emit("update", this);
+        }
+        /** Destroys the buffer */
+        destroy() {
+          this.destroyed = true;
+          this.emit("destroy", this);
+          this.emit("change", this);
+          this._data = null;
+          this.descriptor = null;
+          this.removeAllListeners();
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/ensureIsBuffer.mjs
+  function ensureIsBuffer(buffer, index) {
+    if (!(buffer instanceof Buffer2)) {
+      let usage = index ? BufferUsage.INDEX : BufferUsage.VERTEX;
+      if (buffer instanceof Array) {
+        if (index) {
+          buffer = new Uint32Array(buffer);
+          usage = BufferUsage.INDEX | BufferUsage.COPY_DST;
+        } else {
+          buffer = new Float32Array(buffer);
+          usage = BufferUsage.VERTEX | BufferUsage.COPY_DST;
+        }
+      }
+      buffer = new Buffer2({
+        data: buffer,
+        label: index ? "index-mesh-buffer" : "vertex-mesh-buffer",
+        usage
+      });
+    }
+    return buffer;
+  }
+  var init_ensureIsBuffer = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/ensureIsBuffer.mjs"() {
+      init_Buffer();
+      init_const4();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getGeometryBounds.mjs
+  function getGeometryBounds(geometry, attributeId, bounds) {
+    const attribute = geometry.getAttribute(attributeId);
+    if (!attribute) {
+      bounds.minX = 0;
+      bounds.minY = 0;
+      bounds.maxX = 0;
+      bounds.maxY = 0;
+      return bounds;
+    }
+    const data = attribute.buffer.data;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const byteSize = data.BYTES_PER_ELEMENT;
+    const offset = (attribute.offset || 0) / byteSize;
+    const stride = (attribute.stride || 2 * 4) / byteSize;
+    for (let i2 = offset; i2 < data.length; i2 += stride) {
+      const x2 = data[i2];
+      const y2 = data[i2 + 1];
+      if (x2 > maxX)
+        maxX = x2;
+      if (y2 > maxY)
+        maxY = y2;
+      if (x2 < minX)
+        minX = x2;
+      if (y2 < minY)
+        minY = y2;
+    }
+    bounds.minX = minX;
+    bounds.minY = minY;
+    bounds.maxX = maxX;
+    bounds.maxY = maxY;
+    return bounds;
+  }
+  var init_getGeometryBounds = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getGeometryBounds.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/Geometry.mjs
+  function ensureIsAttribute(attribute) {
+    if (attribute instanceof Buffer2 || Array.isArray(attribute) || attribute.BYTES_PER_ELEMENT) {
+      attribute = {
+        buffer: attribute
+      };
+    }
+    attribute.buffer = ensureIsBuffer(attribute.buffer, false);
+    return attribute;
+  }
+  var Geometry;
+  var init_Geometry = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/Geometry.mjs"() {
+      init_eventemitter3();
+      init_Bounds();
+      init_uid();
+      init_Buffer();
+      init_ensureIsBuffer();
+      init_getGeometryBounds();
+      Geometry = class extends eventemitter3_default {
+        /**
+         * Create a new instance of a geometry
+         * @param options - The options for the geometry.
+         */
+        constructor(options = {}) {
+          super();
+          this.uid = uid("geometry");
+          this._layoutKey = 0;
+          this.instanceCount = 1;
+          this._bounds = new Bounds();
+          this._boundsDirty = true;
+          const { attributes, indexBuffer, topology } = options;
+          this.buffers = [];
+          this.attributes = {};
+          if (attributes) {
+            for (const i2 in attributes) {
+              this.addAttribute(i2, attributes[i2]);
+            }
+          }
+          this.instanceCount = options.instanceCount || 1;
+          if (indexBuffer) {
+            this.addIndex(indexBuffer);
+          }
+          this.topology = topology || "triangle-list";
+        }
+        onBufferUpdate() {
+          this._boundsDirty = true;
+          this.emit("update", this);
+        }
+        /**
+         * Returns the requested attribute.
+         * @param id - The name of the attribute required
+         * @returns - The attribute requested.
+         */
+        getAttribute(id) {
+          return this.attributes[id];
+        }
+        /**
+         * Returns the index buffer
+         * @returns - The index buffer.
+         */
+        getIndex() {
+          return this.indexBuffer;
+        }
+        /**
+         * Returns the requested buffer.
+         * @param id - The name of the buffer required.
+         * @returns - The buffer requested.
+         */
+        getBuffer(id) {
+          return this.getAttribute(id).buffer;
+        }
+        /**
+         * Used to figure out how many vertices there are in this geometry
+         * @returns the number of vertices in the geometry
+         */
+        getSize() {
+          for (const i2 in this.attributes) {
+            const attribute = this.attributes[i2];
+            const buffer = attribute.buffer;
+            return buffer.data.length / (attribute.stride / 4 || attribute.size);
+          }
+          return 0;
+        }
+        /**
+         * Adds an attribute to the geometry.
+         * @param name - The name of the attribute to add.
+         * @param attributeOption - The attribute option to add.
+         */
+        addAttribute(name, attributeOption) {
+          const attribute = ensureIsAttribute(attributeOption);
+          const bufferIndex = this.buffers.indexOf(attribute.buffer);
+          if (bufferIndex === -1) {
+            this.buffers.push(attribute.buffer);
+            attribute.buffer.on("update", this.onBufferUpdate, this);
+            attribute.buffer.on("change", this.onBufferUpdate, this);
+          }
+          this.attributes[name] = attribute;
+        }
+        /**
+         * Adds an index buffer to the geometry.
+         * @param indexBuffer - The index buffer to add. Can be a Buffer, TypedArray, or an array of numbers.
+         */
+        addIndex(indexBuffer) {
+          this.indexBuffer = ensureIsBuffer(indexBuffer, true);
+          this.buffers.push(this.indexBuffer);
+        }
+        /** Returns the bounds of the geometry. */
+        get bounds() {
+          if (!this._boundsDirty)
+            return this._bounds;
+          this._boundsDirty = false;
+          return getGeometryBounds(this, "aPosition", this._bounds);
+        }
+        /**
+         * destroys the geometry.
+         * @param destroyBuffers - destroy the buffers associated with this geometry
+         */
+        destroy(destroyBuffers = false) {
+          this.emit("destroy", this);
+          this.removeAllListeners();
+          if (destroyBuffers) {
+            this.buffers.forEach((buffer) => buffer.destroy());
+          }
+          this.attributes = null;
+          this.buffers = null;
+          this.indexBuffer = null;
+          this._bounds = null;
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/batcher/shared/BatchGeometry.mjs
+  var placeHolderBufferData, placeHolderIndexData, BatchGeometry;
+  var init_BatchGeometry = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/batcher/shared/BatchGeometry.mjs"() {
+      init_Buffer();
+      init_const4();
+      init_Geometry();
+      placeHolderBufferData = new Float32Array(1);
+      placeHolderIndexData = new Uint32Array(1);
+      BatchGeometry = class extends Geometry {
+        constructor() {
+          const vertexSize = 6;
+          const attributeBuffer = new Buffer2({
+            data: placeHolderBufferData,
+            label: "attribute-batch-buffer",
+            usage: BufferUsage.VERTEX | BufferUsage.COPY_DST,
+            shrinkToFit: false
+          });
+          const indexBuffer = new Buffer2({
+            data: placeHolderIndexData,
+            label: "index-batch-buffer",
+            usage: BufferUsage.INDEX | BufferUsage.COPY_DST,
+            // | BufferUsage.STATIC,
+            shrinkToFit: false
+          });
+          const stride = vertexSize * 4;
+          super({
+            attributes: {
+              aPosition: {
+                buffer: attributeBuffer,
+                format: "float32x2",
+                stride,
+                offset: 0
+              },
+              aUV: {
+                buffer: attributeBuffer,
+                format: "float32x2",
+                stride,
+                offset: 2 * 4
+              },
+              aColor: {
+                buffer: attributeBuffer,
+                format: "unorm8x4",
+                stride,
+                offset: 4 * 4
+              },
+              aTextureIdAndRound: {
+                buffer: attributeBuffer,
+                format: "uint16x2",
+                stride,
+                offset: 5 * 4
+              }
+            },
+            indexBuffer
+          });
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/utils/createIdFromString.mjs
+  function createIdFromString(value, groupId) {
+    let id = idHash2[value];
+    if (id === void 0) {
+      if (idCounts[groupId] === void 0) {
+        idCounts[groupId] = 1;
+      }
+      idHash2[value] = id = idCounts[groupId]++;
+    }
+    return id;
+  }
+  var idCounts, idHash2;
+  var init_createIdFromString = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/utils/createIdFromString.mjs"() {
+      "use strict";
+      idCounts = /* @__PURE__ */ Object.create(null);
+      idHash2 = /* @__PURE__ */ Object.create(null);
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/getMaxFragmentPrecision.mjs
+  function getMaxFragmentPrecision() {
+    if (!maxFragmentPrecision) {
+      maxFragmentPrecision = "mediump";
+      const gl = getTestContext();
+      if (gl) {
+        if (gl.getShaderPrecisionFormat) {
+          const shaderFragment = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+          maxFragmentPrecision = shaderFragment.precision ? "highp" : "mediump";
+        }
+      }
+    }
+    return maxFragmentPrecision;
+  }
+  var maxFragmentPrecision;
+  var init_getMaxFragmentPrecision = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/getMaxFragmentPrecision.mjs"() {
+      init_getTestContext();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/addProgramDefines.mjs
+  function addProgramDefines(src, isES300, isFragment) {
+    if (isES300)
+      return src;
+    if (isFragment) {
+      src = src.replace("out vec4 finalColor;", "");
+      return `
+        
+        #ifdef GL_ES // This checks if it is WebGL1
+        #define in varying
+        #define finalColor gl_FragColor
+        #define texture texture2D
+        #endif
+        ${src}
+        `;
+    }
+    return `
+        
+        #ifdef GL_ES // This checks if it is WebGL1
+        #define in attribute
+        #define out varying
+        #endif
+        ${src}
+        `;
+  }
+  var init_addProgramDefines = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/addProgramDefines.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/ensurePrecision.mjs
+  function ensurePrecision(src, options, isFragment) {
+    const maxSupportedPrecision = isFragment ? options.maxSupportedFragmentPrecision : options.maxSupportedVertexPrecision;
+    if (src.substring(0, 9) !== "precision") {
+      let precision = isFragment ? options.requestedFragmentPrecision : options.requestedVertexPrecision;
+      if (precision === "highp" && maxSupportedPrecision !== "highp") {
+        precision = "mediump";
+      }
+      return `precision ${precision} float;
+${src}`;
+    } else if (maxSupportedPrecision !== "highp" && src.substring(0, 15) === "precision highp") {
+      return src.replace("precision highp", "precision mediump");
+    }
+    return src;
+  }
+  var init_ensurePrecision = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/ensurePrecision.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/insertVersion.mjs
+  function insertVersion(src, isES300) {
+    if (!isES300)
+      return src;
+    return `#version 300 es
+${src}`;
+  }
+  var init_insertVersion = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/insertVersion.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/setProgramName.mjs
+  function setProgramName(src, { name = `pixi-program` }, isFragment = true) {
+    name = name.replace(/\s+/g, "-");
+    name += isFragment ? "-fragment" : "-vertex";
+    const nameCache = isFragment ? fragmentNameCache : VertexNameCache;
+    if (nameCache[name]) {
+      nameCache[name]++;
+      name += `-${nameCache[name]}`;
+    } else {
+      nameCache[name] = 1;
+    }
+    if (src.indexOf("#define SHADER_NAME") !== -1)
+      return src;
+    const shaderName = `#define SHADER_NAME ${name}`;
+    return `${shaderName}
+${src}`;
+  }
+  var fragmentNameCache, VertexNameCache;
+  var init_setProgramName = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/setProgramName.mjs"() {
+      "use strict";
+      fragmentNameCache = {};
+      VertexNameCache = {};
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/stripVersion.mjs
+  function stripVersion(src, isES300) {
+    if (!isES300)
+      return src;
+    return src.replace("#version 300 es", "");
+  }
+  var init_stripVersion = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/stripVersion.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/GlProgram.mjs
+  var processes, programCache, _GlProgram, GlProgram;
+  var init_GlProgram = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/GlProgram.mjs"() {
+      init_createIdFromString();
+      init_getMaxFragmentPrecision();
+      init_addProgramDefines();
+      init_ensurePrecision();
+      init_insertVersion();
+      init_setProgramName();
+      init_stripVersion();
+      processes = {
+        // strips any version headers..
+        stripVersion,
+        // adds precision string if not already present
+        ensurePrecision,
+        // add some defines if WebGL1 to make it more compatible with WebGL2 shaders
+        addProgramDefines,
+        // add the program name to the shader
+        setProgramName,
+        // add the version string to the shader header
+        insertVersion
+      };
+      programCache = /* @__PURE__ */ Object.create(null);
+      _GlProgram = class _GlProgram2 {
+        /**
+         * Creates a shiny new GlProgram. Used by WebGL renderer.
+         * @param options - The options for the program.
+         */
+        constructor(options) {
+          options = { ..._GlProgram2.defaultOptions, ...options };
+          const isES300 = options.fragment.indexOf("#version 300 es") !== -1;
+          const preprocessorOptions = {
+            stripVersion: isES300,
+            ensurePrecision: {
+              requestedFragmentPrecision: options.preferredFragmentPrecision,
+              requestedVertexPrecision: options.preferredVertexPrecision,
+              maxSupportedVertexPrecision: "highp",
+              maxSupportedFragmentPrecision: getMaxFragmentPrecision()
+            },
+            setProgramName: {
+              name: options.name
+            },
+            addProgramDefines: isES300,
+            insertVersion: isES300
+          };
+          let fragment3 = options.fragment;
+          let vertex3 = options.vertex;
+          Object.keys(processes).forEach((processKey) => {
+            const processOptions = preprocessorOptions[processKey];
+            fragment3 = processes[processKey](fragment3, processOptions, true);
+            vertex3 = processes[processKey](vertex3, processOptions, false);
+          });
+          this.fragment = fragment3;
+          this.vertex = vertex3;
+          this._key = createIdFromString(`${this.vertex}:${this.fragment}`, "gl-program");
+        }
+        /** destroys the program */
+        destroy() {
+          this.fragment = null;
+          this.vertex = null;
+          this._attributeData = null;
+          this._uniformData = null;
+          this._uniformBlockData = null;
+          this.transformFeedbackVaryings = null;
+        }
+        /**
+         * Helper function that creates a program for a given source.
+         * It will check the program cache if the program has already been created.
+         * If it has that one will be returned, if not a new one will be created and cached.
+         * @param options - The options for the program.
+         * @returns A program using the same source
+         */
+        static from(options) {
+          const key = `${options.vertex}:${options.fragment}`;
+          if (!programCache[key]) {
+            programCache[key] = new _GlProgram2(options);
+          }
+          return programCache[key];
+        }
+      };
+      _GlProgram.defaultOptions = {
+        preferredVertexPrecision: "highp",
+        preferredFragmentPrecision: "mediump"
+      };
+      GlProgram = _GlProgram;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getAttributeInfoFromFormat.mjs
+  function getAttributeInfoFromFormat(format) {
+    return attributeFormatData[format] ?? attributeFormatData.float32;
+  }
+  var attributeFormatData;
+  var init_getAttributeInfoFromFormat = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getAttributeInfoFromFormat.mjs"() {
+      "use strict";
+      attributeFormatData = {
+        uint8x2: { size: 2, stride: 2, normalised: false },
+        uint8x4: { size: 4, stride: 4, normalised: false },
+        sint8x2: { size: 2, stride: 2, normalised: false },
+        sint8x4: { size: 4, stride: 4, normalised: false },
+        unorm8x2: { size: 2, stride: 2, normalised: true },
+        unorm8x4: { size: 4, stride: 4, normalised: true },
+        snorm8x2: { size: 2, stride: 2, normalised: true },
+        snorm8x4: { size: 4, stride: 4, normalised: true },
+        uint16x2: { size: 2, stride: 4, normalised: false },
+        uint16x4: { size: 4, stride: 8, normalised: false },
+        sint16x2: { size: 2, stride: 4, normalised: false },
+        sint16x4: { size: 4, stride: 8, normalised: false },
+        unorm16x2: { size: 2, stride: 4, normalised: true },
+        unorm16x4: { size: 4, stride: 8, normalised: true },
+        snorm16x2: { size: 2, stride: 4, normalised: true },
+        snorm16x4: { size: 4, stride: 8, normalised: true },
+        float16x2: { size: 2, stride: 4, normalised: false },
+        float16x4: { size: 4, stride: 8, normalised: false },
+        float32: { size: 1, stride: 4, normalised: false },
+        float32x2: { size: 2, stride: 8, normalised: false },
+        float32x3: { size: 3, stride: 12, normalised: false },
+        float32x4: { size: 4, stride: 16, normalised: false },
+        uint32: { size: 1, stride: 4, normalised: false },
+        uint32x2: { size: 2, stride: 8, normalised: false },
+        uint32x3: { size: 3, stride: 12, normalised: false },
+        uint32x4: { size: 4, stride: 16, normalised: false },
+        sint32: { size: 1, stride: 4, normalised: false },
+        sint32x2: { size: 2, stride: 8, normalised: false },
+        sint32x3: { size: 3, stride: 12, normalised: false },
+        sint32x4: { size: 4, stride: 16, normalised: false }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractAttributesFromGpuProgram.mjs
+  function extractAttributesFromGpuProgram({ source: source2, entryPoint }) {
+    const results = {};
+    const mainVertStart = source2.indexOf(`fn ${entryPoint}`);
+    if (mainVertStart !== -1) {
+      const arrowFunctionStart = source2.indexOf("->", mainVertStart);
+      if (arrowFunctionStart !== -1) {
+        const functionArgsSubstring = source2.substring(mainVertStart, arrowFunctionStart);
+        const inputsRegex = /@location\((\d+)\)\s+([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_<>]+)(?:,|\s|$)/g;
+        let match;
+        while ((match = inputsRegex.exec(functionArgsSubstring)) !== null) {
+          const format = WGSL_TO_VERTEX_TYPES[match[3]] ?? "float32";
+          results[match[2]] = {
+            location: parseInt(match[1], 10),
+            format,
+            stride: getAttributeInfoFromFormat(format).stride,
+            offset: 0,
+            instance: false,
+            start: 0
+          };
+        }
+      }
+    }
+    return results;
+  }
+  var WGSL_TO_VERTEX_TYPES;
+  var init_extractAttributesFromGpuProgram = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractAttributesFromGpuProgram.mjs"() {
+      init_getAttributeInfoFromFormat();
+      WGSL_TO_VERTEX_TYPES = {
+        f32: "float32",
+        "vec2<f32>": "float32x2",
+        "vec3<f32>": "float32x3",
+        "vec4<f32>": "float32x4",
+        vec2f: "float32x2",
+        vec3f: "float32x3",
+        vec4f: "float32x4",
+        i32: "sint32",
+        "vec2<i32>": "sint32x2",
+        "vec3<i32>": "sint32x3",
+        "vec4<i32>": "sint32x4",
+        u32: "uint32",
+        "vec2<u32>": "uint32x2",
+        "vec3<u32>": "uint32x3",
+        "vec4<u32>": "uint32x4",
+        bool: "uint32",
+        "vec2<bool>": "uint32x2",
+        "vec3<bool>": "uint32x3",
+        "vec4<bool>": "uint32x4"
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractStructAndGroups.mjs
+  function extractStructAndGroups(wgsl2) {
+    const linePattern = /(^|[^/])@(group|binding)\(\d+\)[^;]+;/g;
+    const groupPattern = /@group\((\d+)\)/;
+    const bindingPattern = /@binding\((\d+)\)/;
+    const namePattern = /var(<[^>]+>)? (\w+)/;
+    const typePattern = /:\s*(\w+)/;
+    const structPattern = /struct\s+(\w+)\s*{([^}]+)}/g;
+    const structMemberPattern = /(\w+)\s*:\s*([\w\<\>]+)/g;
+    const structName = /struct\s+(\w+)/;
+    const groups = wgsl2.match(linePattern)?.map((item) => ({
+      group: parseInt(item.match(groupPattern)[1], 10),
+      binding: parseInt(item.match(bindingPattern)[1], 10),
+      name: item.match(namePattern)[2],
+      isUniform: item.match(namePattern)[1] === "<uniform>",
+      type: item.match(typePattern)[1]
+    }));
+    if (!groups) {
+      return {
+        groups: [],
+        structs: []
+      };
+    }
+    const structs = wgsl2.match(structPattern)?.map((struct) => {
+      const name = struct.match(structName)[1];
+      const members = struct.match(structMemberPattern).reduce((acc, member) => {
+        const [name2, type] = member.split(":");
+        acc[name2.trim()] = type.trim();
+        return acc;
+      }, {});
+      if (!members) {
+        return null;
+      }
+      return { name, members };
+    }).filter(({ name }) => groups.some((group) => group.type === name)) ?? [];
+    return {
+      groups,
+      structs
+    };
+  }
+  var init_extractStructAndGroups = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractStructAndGroups.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/const.mjs
+  var ShaderStage;
+  var init_const5 = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/const.mjs"() {
+      "use strict";
+      ShaderStage = /* @__PURE__ */ ((ShaderStage2) => {
+        ShaderStage2[ShaderStage2["VERTEX"] = 1] = "VERTEX";
+        ShaderStage2[ShaderStage2["FRAGMENT"] = 2] = "FRAGMENT";
+        ShaderStage2[ShaderStage2["COMPUTE"] = 4] = "COMPUTE";
+        return ShaderStage2;
+      })(ShaderStage || {});
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateGpuLayoutGroups.mjs
+  function generateGpuLayoutGroups({ groups }) {
+    const layout = [];
+    for (let i2 = 0; i2 < groups.length; i2++) {
+      const group = groups[i2];
+      if (!layout[group.group]) {
+        layout[group.group] = [];
+      }
+      if (group.isUniform) {
+        layout[group.group].push({
+          binding: group.binding,
+          visibility: ShaderStage.VERTEX | ShaderStage.FRAGMENT,
+          buffer: {
+            type: "uniform"
+          }
+        });
+      } else if (group.type === "sampler") {
+        layout[group.group].push({
+          binding: group.binding,
+          visibility: ShaderStage.FRAGMENT,
+          sampler: {
+            type: "filtering"
+          }
+        });
+      } else if (group.type === "texture_2d") {
+        layout[group.group].push({
+          binding: group.binding,
+          visibility: ShaderStage.FRAGMENT,
+          texture: {
+            sampleType: "float",
+            viewDimension: "2d",
+            multisampled: false
+          }
+        });
+      }
+    }
+    return layout;
+  }
+  var init_generateGpuLayoutGroups = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateGpuLayoutGroups.mjs"() {
+      init_const5();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateLayoutHash.mjs
+  function generateLayoutHash({ groups }) {
+    const layout = [];
+    for (let i2 = 0; i2 < groups.length; i2++) {
+      const group = groups[i2];
+      if (!layout[group.group]) {
+        layout[group.group] = {};
+      }
+      layout[group.group][group.name] = group.binding;
+    }
+    return layout;
+  }
+  var init_generateLayoutHash = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateLayoutHash.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/removeStructAndGroupDuplicates.mjs
+  function removeStructAndGroupDuplicates(vertexStructsAndGroups, fragmentStructsAndGroups) {
+    const structNameSet = /* @__PURE__ */ new Set();
+    const dupeGroupKeySet = /* @__PURE__ */ new Set();
+    const structs = [...vertexStructsAndGroups.structs, ...fragmentStructsAndGroups.structs].filter((struct) => {
+      if (structNameSet.has(struct.name)) {
+        return false;
+      }
+      structNameSet.add(struct.name);
+      return true;
+    });
+    const groups = [...vertexStructsAndGroups.groups, ...fragmentStructsAndGroups.groups].filter((group) => {
+      const key = `${group.name}-${group.binding}`;
+      if (dupeGroupKeySet.has(key)) {
+        return false;
+      }
+      dupeGroupKeySet.add(key);
+      return true;
+    });
+    return { structs, groups };
+  }
+  var init_removeStructAndGroupDuplicates = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/removeStructAndGroupDuplicates.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/GpuProgram.mjs
+  var programCache2, GpuProgram;
+  var init_GpuProgram = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/GpuProgram.mjs"() {
+      init_createIdFromString();
+      init_extractAttributesFromGpuProgram();
+      init_extractStructAndGroups();
+      init_generateGpuLayoutGroups();
+      init_generateLayoutHash();
+      init_removeStructAndGroupDuplicates();
+      programCache2 = /* @__PURE__ */ Object.create(null);
+      GpuProgram = class {
+        /**
+         * Create a new GpuProgram
+         * @param options - The options for the gpu program
+         */
+        constructor(options) {
+          this._layoutKey = 0;
+          this._attributeLocationsKey = 0;
+          const { fragment: fragment3, vertex: vertex3, layout, gpuLayout, name } = options;
+          this.name = name;
+          this.fragment = fragment3;
+          this.vertex = vertex3;
+          if (fragment3.source === vertex3.source) {
+            const structsAndGroups = extractStructAndGroups(fragment3.source);
+            this.structsAndGroups = structsAndGroups;
+          } else {
+            const vertexStructsAndGroups = extractStructAndGroups(vertex3.source);
+            const fragmentStructsAndGroups = extractStructAndGroups(fragment3.source);
+            this.structsAndGroups = removeStructAndGroupDuplicates(vertexStructsAndGroups, fragmentStructsAndGroups);
+          }
+          this.layout = layout ?? generateLayoutHash(this.structsAndGroups);
+          this.gpuLayout = gpuLayout ?? generateGpuLayoutGroups(this.structsAndGroups);
+          this.autoAssignGlobalUniforms = !!(this.layout[0]?.globalUniforms !== void 0);
+          this.autoAssignLocalUniforms = !!(this.layout[1]?.localUniforms !== void 0);
+          this._generateProgramKey();
+        }
+        // TODO maker this pure
+        _generateProgramKey() {
+          const { vertex: vertex3, fragment: fragment3 } = this;
+          const bigKey = vertex3.source + fragment3.source + vertex3.entryPoint + fragment3.entryPoint;
+          this._layoutKey = createIdFromString(bigKey, "program");
+        }
+        get attributeData() {
+          this._attributeData ?? (this._attributeData = extractAttributesFromGpuProgram(this.vertex));
+          return this._attributeData;
+        }
+        /** destroys the program */
+        destroy() {
+          this.gpuLayout = null;
+          this.layout = null;
+          this.structsAndGroups = null;
+          this.fragment = null;
+          this.vertex = null;
+        }
+        /**
+         * Helper function that creates a program for a given source.
+         * It will check the program cache if the program has already been created.
+         * If it has that one will be returned, if not a new one will be created and cached.
+         * @param options - The options for the program.
+         * @returns A program using the same source
+         */
+        static from(options) {
+          const key = `${options.vertex.source}:${options.fragment.source}:${options.fragment.entryPoint}:${options.vertex.entryPoint}`;
+          if (!programCache2[key]) {
+            programCache2[key] = new GpuProgram(options);
+          }
+          return programCache2[key];
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/addBits.mjs
+  function addBits(srcParts, parts, name) {
+    if (srcParts) {
+      for (const i2 in srcParts) {
+        const id = i2.toLocaleLowerCase();
+        const part = parts[id];
+        if (part) {
+          let sanitisedPart = srcParts[i2];
+          if (i2 === "header") {
+            sanitisedPart = sanitisedPart.replace(/@in\s+[^;]+;\s*/g, "").replace(/@out\s+[^;]+;\s*/g, "");
+          }
+          if (name) {
+            part.push(`//----${name}----//`);
+          }
+          part.push(sanitisedPart);
+        } else {
+          warn(`${i2} placement hook does not exist in shader`);
+        }
+      }
+    }
+  }
+  var init_addBits = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/addBits.mjs"() {
+      init_warn();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileHooks.mjs
+  function compileHooks(programSrc) {
+    const parts = {};
+    const partMatches = programSrc.match(findHooksRx)?.map((hook) => hook.replace(/[{()}]/g, "")) ?? [];
+    partMatches.forEach((hook) => {
+      parts[hook] = [];
+    });
+    return parts;
+  }
+  var findHooksRx;
+  var init_compileHooks = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileHooks.mjs"() {
+      "use strict";
+      findHooksRx = /\{\{(.*?)\}\}/g;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileInputs.mjs
+  function extractInputs(fragmentSource, out2) {
+    let match;
+    const regex = /@in\s+([^;]+);/g;
+    while ((match = regex.exec(fragmentSource)) !== null) {
+      out2.push(match[1]);
+    }
+  }
+  function compileInputs(fragments, template, sort = false) {
+    const results = [];
+    extractInputs(template, results);
+    fragments.forEach((fragment3) => {
+      if (fragment3.header) {
+        extractInputs(fragment3.header, results);
+      }
+    });
+    const mainInput = results;
+    if (sort) {
+      mainInput.sort();
+    }
+    const finalString = mainInput.map((inValue, i2) => `       @location(${i2}) ${inValue},`).join("\n");
+    let cleanedString = template.replace(/@in\s+[^;]+;\s*/g, "");
+    cleanedString = cleanedString.replace("{{in}}", `
+${finalString}
+`);
+    return cleanedString;
+  }
+  var init_compileInputs = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileInputs.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileOutputs.mjs
+  function extractOutputs(fragmentSource, out2) {
+    let match;
+    const regex = /@out\s+([^;]+);/g;
+    while ((match = regex.exec(fragmentSource)) !== null) {
+      out2.push(match[1]);
+    }
+  }
+  function extractVariableName(value) {
+    const regex = /\b(\w+)\s*:/g;
+    const match = regex.exec(value);
+    return match ? match[1] : "";
+  }
+  function stripVariable(value) {
+    const regex = /@.*?\s+/g;
+    return value.replace(regex, "");
+  }
+  function compileOutputs(fragments, template) {
+    const results = [];
+    extractOutputs(template, results);
+    fragments.forEach((fragment3) => {
+      if (fragment3.header) {
+        extractOutputs(fragment3.header, results);
+      }
+    });
+    let index = 0;
+    const mainStruct = results.sort().map((inValue) => {
+      if (inValue.indexOf("builtin") > -1) {
+        return inValue;
+      }
+      return `@location(${index++}) ${inValue}`;
+    }).join(",\n");
+    const mainStart = results.sort().map((inValue) => `       var ${stripVariable(inValue)};`).join("\n");
+    const mainEnd = `return VSOutput(
+                ${results.sort().map((inValue) => ` ${extractVariableName(inValue)}`).join(",\n")});`;
+    let compiledCode = template.replace(/@out\s+[^;]+;\s*/g, "");
+    compiledCode = compiledCode.replace("{{struct}}", `
+${mainStruct}
+`);
+    compiledCode = compiledCode.replace("{{start}}", `
+${mainStart}
+`);
+    compiledCode = compiledCode.replace("{{return}}", `
+${mainEnd}
+`);
+    return compiledCode;
+  }
+  var init_compileOutputs = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileOutputs.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/injectBits.mjs
+  function injectBits(templateSrc, fragmentParts) {
+    let out2 = templateSrc;
+    for (const i2 in fragmentParts) {
+      const parts = fragmentParts[i2];
+      const toInject = parts.join("\n");
+      if (toInject.length) {
+        out2 = out2.replace(`{{${i2}}}`, `//-----${i2} START-----//
+${parts.join("\n")}
+//----${i2} FINISH----//`);
+      } else {
+        out2 = out2.replace(`{{${i2}}}`, "");
+      }
+    }
+    return out2;
+  }
+  var init_injectBits = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/injectBits.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/compileHighShader.mjs
+  function compileHighShader({
+    template,
+    bits
+  }) {
+    const cacheId = generateCacheId(template, bits);
+    if (cacheMap[cacheId])
+      return cacheMap[cacheId];
+    const { vertex: vertex3, fragment: fragment3 } = compileInputsAndOutputs(template, bits);
+    cacheMap[cacheId] = compileBits(vertex3, fragment3, bits);
+    return cacheMap[cacheId];
+  }
+  function compileHighShaderGl({
+    template,
+    bits
+  }) {
+    const cacheId = generateCacheId(template, bits);
+    if (cacheMap[cacheId])
+      return cacheMap[cacheId];
+    cacheMap[cacheId] = compileBits(template.vertex, template.fragment, bits);
+    return cacheMap[cacheId];
+  }
+  function compileInputsAndOutputs(template, bits) {
+    const vertexFragments = bits.map((shaderBit) => shaderBit.vertex).filter((v2) => !!v2);
+    const fragmentFragments = bits.map((shaderBit) => shaderBit.fragment).filter((v2) => !!v2);
+    let compiledVertex = compileInputs(vertexFragments, template.vertex, true);
+    compiledVertex = compileOutputs(vertexFragments, compiledVertex);
+    const compiledFragment = compileInputs(fragmentFragments, template.fragment, true);
+    return {
+      vertex: compiledVertex,
+      fragment: compiledFragment
+    };
+  }
+  function generateCacheId(template, bits) {
+    return bits.map((highFragment) => {
+      if (!bitCacheMap.has(highFragment)) {
+        bitCacheMap.set(highFragment, CACHE_UID++);
+      }
+      return bitCacheMap.get(highFragment);
+    }).sort((a2, b2) => a2 - b2).join("-") + template.vertex + template.fragment;
+  }
+  function compileBits(vertex3, fragment3, bits) {
+    const vertexParts = compileHooks(vertex3);
+    const fragmentParts = compileHooks(fragment3);
+    bits.forEach((shaderBit) => {
+      addBits(shaderBit.vertex, vertexParts, shaderBit.name);
+      addBits(shaderBit.fragment, fragmentParts, shaderBit.name);
+    });
+    return {
+      vertex: injectBits(vertex3, vertexParts),
+      fragment: injectBits(fragment3, fragmentParts)
+    };
+  }
+  var cacheMap, bitCacheMap, CACHE_UID;
+  var init_compileHighShader = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/compileHighShader.mjs"() {
+      init_addBits();
+      init_compileHooks();
+      init_compileInputs();
+      init_compileOutputs();
+      init_injectBits();
+      cacheMap = /* @__PURE__ */ Object.create(null);
+      bitCacheMap = /* @__PURE__ */ new Map();
+      CACHE_UID = 0;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/defaultProgramTemplate.mjs
+  var vertexGPUTemplate, fragmentGPUTemplate, vertexGlTemplate, fragmentGlTemplate;
+  var init_defaultProgramTemplate = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/defaultProgramTemplate.mjs"() {
+      "use strict";
+      vertexGPUTemplate = /* wgsl */
+      `
+    @in aPosition: vec2<f32>;
+    @in aUV: vec2<f32>;
+
+    @out @builtin(position) vPosition: vec4<f32>;
+    @out vUV : vec2<f32>;
+    @out vColor : vec4<f32>;
+
+    {{header}}
+
+    struct VSOutput {
+        {{struct}}
+    };
+
+    @vertex
+    fn main( {{in}} ) -> VSOutput {
+
+        var worldTransformMatrix = globalUniforms.uWorldTransformMatrix;
+        var modelMatrix = mat3x3<f32>(
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0
+          );
+        var position = aPosition;
+        var uv = aUV;
+
+        {{start}}
+        
+        vColor = vec4<f32>(1., 1., 1., 1.);
+
+        {{main}}
+
+        vUV = uv;
+
+        var modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * worldTransformMatrix * modelMatrix;
+
+        vPosition =  vec4<f32>((modelViewProjectionMatrix *  vec3<f32>(position, 1.0)).xy, 0.0, 1.0);
+       
+        vColor *= globalUniforms.uWorldColorAlpha;
+
+        {{end}}
+
+        {{return}}
+    };
+`;
+      fragmentGPUTemplate = /* wgsl */
+      `
+    @in vUV : vec2<f32>;
+    @in vColor : vec4<f32>;
+   
+    {{header}}
+
+    @fragment
+    fn main(
+        {{in}}
+      ) -> @location(0) vec4<f32> {
+        
+        {{start}}
+
+        var outColor:vec4<f32>;
+      
+        {{main}}
+        
+        var finalColor:vec4<f32> = outColor * vColor;
+
+        {{end}}
+
+        return finalColor;
+      };
+`;
+      vertexGlTemplate = /* glsl */
+      `
+    in vec2 aPosition;
+    in vec2 aUV;
+
+    out vec4 vColor;
+    out vec2 vUV;
+
+    {{header}}
+
+    void main(void){
+
+        mat3 worldTransformMatrix = uWorldTransformMatrix;
+        mat3 modelMatrix = mat3(
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0
+          );
+        vec2 position = aPosition;
+        vec2 uv = aUV;
+        
+        {{start}}
+        
+        vColor = vec4(1.);
+        
+        {{main}}
+        
+        vUV = uv;
+        
+        mat3 modelViewProjectionMatrix = uProjectionMatrix * worldTransformMatrix * modelMatrix;
+
+        gl_Position = vec4((modelViewProjectionMatrix * vec3(position, 1.0)).xy, 0.0, 1.0);
+
+        vColor *= uWorldColorAlpha;
+
+        {{end}}
+    }
+`;
+      fragmentGlTemplate = /* glsl */
+      `
+   
+    in vec4 vColor;
+    in vec2 vUV;
+
+    out vec4 finalColor;
+
+    {{header}}
+
+    void main(void) {
+        
+        {{start}}
+
+        vec4 outColor;
+      
+        {{main}}
+        
+        finalColor = outColor * vColor;
+        
+        {{end}}
+    }
+`;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/globalUniformsBit.mjs
+  var globalUniformsBit, globalUniformsBitGl;
+  var init_globalUniformsBit = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/globalUniformsBit.mjs"() {
+      "use strict";
+      globalUniformsBit = {
+        name: "global-uniforms-bit",
+        vertex: {
+          header: (
+            /* wgsl */
+            `
+        struct GlobalUniforms {
+            uProjectionMatrix:mat3x3<f32>,
+            uWorldTransformMatrix:mat3x3<f32>,
+            uWorldColorAlpha: vec4<f32>,
+            uResolution: vec2<f32>,
+        }
+
+        @group(0) @binding(0) var<uniform> globalUniforms : GlobalUniforms;
+        `
+          )
+        }
+      };
+      globalUniformsBitGl = {
+        name: "global-uniforms-bit",
+        vertex: {
+          header: (
+            /* glsl */
+            `
+          uniform mat3 uProjectionMatrix;
+          uniform mat3 uWorldTransformMatrix;
+          uniform vec4 uWorldColorAlpha;
+          uniform vec2 uResolution;
+        `
+          )
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compileHighShaderToProgram.mjs
+  function compileHighShaderGpuProgram({ bits, name }) {
+    const source2 = compileHighShader({
+      template: {
+        fragment: fragmentGPUTemplate,
+        vertex: vertexGPUTemplate
+      },
+      bits: [
+        globalUniformsBit,
+        ...bits
+      ]
+    });
+    return GpuProgram.from({
+      name,
+      vertex: {
+        source: source2.vertex,
+        entryPoint: "main"
+      },
+      fragment: {
+        source: source2.fragment,
+        entryPoint: "main"
+      }
+    });
+  }
+  function compileHighShaderGlProgram({ bits, name }) {
+    return new GlProgram({
+      name,
+      ...compileHighShaderGl({
+        template: {
+          vertex: vertexGlTemplate,
+          fragment: fragmentGlTemplate
+        },
+        bits: [
+          globalUniformsBitGl,
+          ...bits
+        ]
+      })
+    });
+  }
+  var init_compileHighShaderToProgram = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/compileHighShaderToProgram.mjs"() {
+      init_GlProgram();
+      init_GpuProgram();
+      init_compileHighShader();
+      init_defaultProgramTemplate();
+      init_globalUniformsBit();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/colorBit.mjs
+  var colorBit, colorBitGl;
+  var init_colorBit = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/colorBit.mjs"() {
+      "use strict";
+      colorBit = {
+        name: "color-bit",
+        vertex: {
+          header: (
+            /* wgsl */
+            `
+            @in aColor: vec4<f32>;
+        `
+          ),
+          main: (
+            /* wgsl */
+            `
+            vColor *= vec4<f32>(aColor.rgb * aColor.a, aColor.a);
+        `
+          )
+        }
+      };
+      colorBitGl = {
+        name: "color-bit",
+        vertex: {
+          header: (
+            /* glsl */
+            `
+            in vec4 aColor;
+        `
+          ),
+          main: (
+            /* glsl */
+            `
+            vColor *= vec4(aColor.rgb * aColor.a, aColor.a);
+        `
+          )
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/generateTextureBatchBit.mjs
+  function generateBindingSrc(maxTextures2) {
+    const src = [];
+    if (maxTextures2 === 1) {
+      src.push("@group(1) @binding(0) var textureSource1: texture_2d<f32>;");
+      src.push("@group(1) @binding(1) var textureSampler1: sampler;");
+    } else {
+      let bindingIndex = 0;
+      for (let i2 = 0; i2 < maxTextures2; i2++) {
+        src.push(`@group(1) @binding(${bindingIndex++}) var textureSource${i2 + 1}: texture_2d<f32>;`);
+        src.push(`@group(1) @binding(${bindingIndex++}) var textureSampler${i2 + 1}: sampler;`);
+      }
+    }
+    return src.join("\n");
+  }
+  function generateSampleSrc(maxTextures2) {
+    const src = [];
+    if (maxTextures2 === 1) {
+      src.push("outColor = textureSampleGrad(textureSource1, textureSampler1, vUV, uvDx, uvDy);");
+    } else {
+      src.push("switch vTextureId {");
+      for (let i2 = 0; i2 < maxTextures2; i2++) {
+        if (i2 === maxTextures2 - 1) {
+          src.push(`  default:{`);
+        } else {
+          src.push(`  case ${i2}:{`);
+        }
+        src.push(`      outColor = textureSampleGrad(textureSource${i2 + 1}, textureSampler${i2 + 1}, vUV, uvDx, uvDy);`);
+        src.push(`      break;}`);
+      }
+      src.push(`}`);
+    }
+    return src.join("\n");
+  }
+  function generateTextureBatchBit(maxTextures2) {
+    if (!textureBatchBitGpuCache[maxTextures2]) {
+      textureBatchBitGpuCache[maxTextures2] = {
+        name: "texture-batch-bit",
+        vertex: {
+          header: `
+                @in aTextureIdAndRound: vec2<u32>;
+                @out @interpolate(flat) vTextureId : u32;
+            `,
+          main: `
+                vTextureId = aTextureIdAndRound.y;
+            `,
+          end: `
+                if(aTextureIdAndRound.x == 1)
+                {
+                    vPosition = vec4<f32>(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
+                }
+            `
+        },
+        fragment: {
+          header: `
+                @in @interpolate(flat) vTextureId: u32;
+
+                ${generateBindingSrc(maxTextures2)}
+            `,
+          main: `
+                var uvDx = dpdx(vUV);
+                var uvDy = dpdy(vUV);
+
+                ${generateSampleSrc(maxTextures2)}
+            `
+        }
+      };
+    }
+    return textureBatchBitGpuCache[maxTextures2];
+  }
+  function generateSampleGlSrc(maxTextures2) {
+    const src = [];
+    for (let i2 = 0; i2 < maxTextures2; i2++) {
+      if (i2 > 0) {
+        src.push("else");
+      }
+      if (i2 < maxTextures2 - 1) {
+        src.push(`if(vTextureId < ${i2}.5)`);
+      }
+      src.push("{");
+      src.push(`	outColor = texture(uTextures[${i2}], vUV);`);
+      src.push("}");
+    }
+    return src.join("\n");
+  }
+  function generateTextureBatchBitGl(maxTextures2) {
+    if (!textureBatchBitGlCache[maxTextures2]) {
+      textureBatchBitGlCache[maxTextures2] = {
+        name: "texture-batch-bit",
+        vertex: {
+          header: `
+                in vec2 aTextureIdAndRound;
+                out float vTextureId;
+
+            `,
+          main: `
+                vTextureId = aTextureIdAndRound.y;
+            `,
+          end: `
+                if(aTextureIdAndRound.x == 1.)
+                {
+                    gl_Position.xy = roundPixels(gl_Position.xy, uResolution);
+                }
+            `
+        },
+        fragment: {
+          header: `
+                in float vTextureId;
+
+                uniform sampler2D uTextures[${maxTextures2}];
+
+            `,
+          main: `
+
+                ${generateSampleGlSrc(maxTextures2)}
+            `
+        }
+      };
+    }
+    return textureBatchBitGlCache[maxTextures2];
+  }
+  var textureBatchBitGpuCache, textureBatchBitGlCache;
+  var init_generateTextureBatchBit = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/generateTextureBatchBit.mjs"() {
+      "use strict";
+      textureBatchBitGpuCache = {};
+      textureBatchBitGlCache = {};
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/roundPixelsBit.mjs
+  var roundPixelsBit, roundPixelsBitGl;
+  var init_roundPixelsBit = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/roundPixelsBit.mjs"() {
+      "use strict";
+      roundPixelsBit = {
+        name: "round-pixels-bit",
+        vertex: {
+          header: (
+            /* wgsl */
+            `
+            fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> 
+            {
+                return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
+            }
+        `
+          )
+        }
+      };
+      roundPixelsBitGl = {
+        name: "round-pixels-bit",
+        vertex: {
+          header: (
+            /* glsl */
+            `   
+            vec2 roundPixels(vec2 position, vec2 targetSize)
+            {       
+                return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
+            }
+        `
+          )
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/types.mjs
+  var UNIFORM_TYPES_VALUES, UNIFORM_TYPES_MAP;
+  var init_types = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/types.mjs"() {
+      "use strict";
+      UNIFORM_TYPES_VALUES = [
+        "f32",
+        "i32",
+        "vec2<f32>",
+        "vec3<f32>",
+        "vec4<f32>",
+        "mat2x2<f32>",
+        "mat3x3<f32>",
+        "mat4x4<f32>",
+        "mat3x2<f32>",
+        "mat4x2<f32>",
+        "mat2x3<f32>",
+        "mat4x3<f32>",
+        "mat2x4<f32>",
+        "mat3x4<f32>"
+      ];
+      UNIFORM_TYPES_MAP = UNIFORM_TYPES_VALUES.reduce((acc, type) => {
+        acc[type] = true;
+        return acc;
+      }, {});
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/utils/getDefaultUniformValue.mjs
+  function getDefaultUniformValue(type, size) {
+    switch (type) {
+      case "f32":
+        return 0;
+      case "vec2<f32>":
+        return new Float32Array(2 * size);
+      case "vec3<f32>":
+        return new Float32Array(3 * size);
+      case "vec4<f32>":
+        return new Float32Array(4 * size);
+      case "mat2x2<f32>":
+        return new Float32Array([
+          1,
+          0,
+          0,
+          1
+        ]);
+      case "mat3x3<f32>":
+        return new Float32Array([
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ]);
+      case "mat4x4<f32>":
+        return new Float32Array([
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]);
+    }
+    return null;
+  }
+  var init_getDefaultUniformValue = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/utils/getDefaultUniformValue.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/UniformGroup.mjs
+  var _UniformGroup, UniformGroup;
+  var init_UniformGroup = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/UniformGroup.mjs"() {
+      init_uid();
+      init_createIdFromString();
+      init_types();
+      init_getDefaultUniformValue();
+      _UniformGroup = class _UniformGroup2 {
+        /**
+         * Create a new Uniform group
+         * @param uniformStructures - The structures of the uniform group
+         * @param options - The optional parameters of this uniform group
+         */
+        constructor(uniformStructures, options) {
+          this._touched = 0;
+          this.uid = uid("uniform");
+          this._resourceType = "uniformGroup";
+          this._resourceId = uid("resource");
+          this.isUniformGroup = true;
+          this._dirtyId = 0;
+          this.destroyed = false;
+          options = { ..._UniformGroup2.defaultOptions, ...options };
+          this.uniformStructures = uniformStructures;
+          const uniforms = {};
+          for (const i2 in uniformStructures) {
+            const uniformData = uniformStructures[i2];
+            uniformData.name = i2;
+            uniformData.size = uniformData.size ?? 1;
+            if (!UNIFORM_TYPES_MAP[uniformData.type]) {
+              throw new Error(`Uniform type ${uniformData.type} is not supported. Supported uniform types are: ${UNIFORM_TYPES_VALUES.join(", ")}`);
+            }
+            uniformData.value ?? (uniformData.value = getDefaultUniformValue(uniformData.type, uniformData.size));
+            uniforms[i2] = uniformData.value;
+          }
+          this.uniforms = uniforms;
+          this._dirtyId = 1;
+          this.ubo = options.ubo;
+          this.isStatic = options.isStatic;
+          this._signature = createIdFromString(Object.keys(uniforms).map(
+            (i2) => `${i2}-${uniformStructures[i2].type}`
+          ).join("-"), "uniform-group");
+        }
+        /** Call this if you want the uniform groups data to be uploaded to the GPU only useful if `isStatic` is true. */
+        update() {
+          this._dirtyId++;
+        }
+      };
+      _UniformGroup.defaultOptions = {
+        /** if true the UniformGroup is handled as an Uniform buffer object. */
+        ubo: false,
+        /** if true, then you are responsible for when the data is uploaded to the GPU by calling `update()` */
+        isStatic: false
+      };
+      UniformGroup = _UniformGroup;
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/getBatchSamplersUniformGroup.mjs
+  function getBatchSamplersUniformGroup(maxTextures2) {
+    let batchSamplersUniformGroup = batchSamplersUniformGroupHash[maxTextures2];
+    if (batchSamplersUniformGroup)
+      return batchSamplersUniformGroup;
+    const sampleValues = new Int32Array(maxTextures2);
+    for (let i2 = 0; i2 < maxTextures2; i2++) {
+      sampleValues[i2] = i2;
+    }
+    batchSamplersUniformGroup = batchSamplersUniformGroupHash[maxTextures2] = new UniformGroup({
+      uTextures: { value: sampleValues, type: `i32`, size: maxTextures2 }
+    }, { isStatic: true });
+    return batchSamplersUniformGroup;
+  }
+  var batchSamplersUniformGroupHash;
+  var init_getBatchSamplersUniformGroup = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/getBatchSamplersUniformGroup.mjs"() {
+      init_UniformGroup();
+      batchSamplersUniformGroupHash = {};
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/types.mjs
+  var RendererType;
+  var init_types2 = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/types.mjs"() {
+      "use strict";
+      RendererType = /* @__PURE__ */ ((RendererType2) => {
+        RendererType2[RendererType2["WEBGL"] = 1] = "WEBGL";
+        RendererType2[RendererType2["WEBGPU"] = 2] = "WEBGPU";
+        RendererType2[RendererType2["BOTH"] = 3] = "BOTH";
+        return RendererType2;
+      })(RendererType || {});
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/Shader.mjs
+  var Shader;
+  var init_Shader = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/Shader.mjs"() {
+      init_eventemitter3();
+      init_GlProgram();
+      init_BindGroup();
+      init_GpuProgram();
+      init_types2();
+      init_UniformGroup();
+      Shader = class extends eventemitter3_default {
+        constructor(options) {
+          super();
+          this._uniformBindMap = /* @__PURE__ */ Object.create(null);
+          this._ownedBindGroups = [];
+          let {
+            gpuProgram: gpuProgram3,
+            glProgram: glProgram3,
+            groups,
+            resources,
+            compatibleRenderers,
+            groupMap
+          } = options;
+          this.gpuProgram = gpuProgram3;
+          this.glProgram = glProgram3;
+          if (compatibleRenderers === void 0) {
+            compatibleRenderers = 0;
+            if (gpuProgram3)
+              compatibleRenderers |= RendererType.WEBGPU;
+            if (glProgram3)
+              compatibleRenderers |= RendererType.WEBGL;
+          }
+          this.compatibleRenderers = compatibleRenderers;
+          const nameHash = {};
+          if (!resources && !groups) {
+            resources = {};
+          }
+          if (resources && groups) {
+            throw new Error("[Shader] Cannot have both resources and groups");
+          } else if (!gpuProgram3 && groups && !groupMap) {
+            throw new Error("[Shader] No group map or WebGPU shader provided - consider using resources instead.");
+          } else if (!gpuProgram3 && groups && groupMap) {
+            for (const i2 in groupMap) {
+              for (const j2 in groupMap[i2]) {
+                const uniformName = groupMap[i2][j2];
+                nameHash[uniformName] = {
+                  group: i2,
+                  binding: j2,
+                  name: uniformName
+                };
+              }
+            }
+          } else if (gpuProgram3 && groups && !groupMap) {
+            const groupData = gpuProgram3.structsAndGroups.groups;
+            groupMap = {};
+            groupData.forEach((data) => {
+              groupMap[data.group] = groupMap[data.group] || {};
+              groupMap[data.group][data.binding] = data.name;
+              nameHash[data.name] = data;
+            });
+          } else if (resources) {
+            groups = {};
+            groupMap = {};
+            if (gpuProgram3) {
+              const groupData = gpuProgram3.structsAndGroups.groups;
+              groupData.forEach((data) => {
+                groupMap[data.group] = groupMap[data.group] || {};
+                groupMap[data.group][data.binding] = data.name;
+                nameHash[data.name] = data;
+              });
+            }
+            let bindTick = 0;
+            for (const i2 in resources) {
+              if (nameHash[i2])
+                continue;
+              if (!groups[99]) {
+                groups[99] = new BindGroup();
+                this._ownedBindGroups.push(groups[99]);
+              }
+              nameHash[i2] = { group: 99, binding: bindTick, name: i2 };
+              groupMap[99] = groupMap[99] || {};
+              groupMap[99][bindTick] = i2;
+              bindTick++;
+            }
+            for (const i2 in resources) {
+              const name = i2;
+              let value = resources[i2];
+              if (!value.source && !value._resourceType) {
+                value = new UniformGroup(value);
+              }
+              const data = nameHash[name];
+              if (data) {
+                if (!groups[data.group]) {
+                  groups[data.group] = new BindGroup();
+                  this._ownedBindGroups.push(groups[data.group]);
+                }
+                groups[data.group].setResource(value, data.binding);
+              }
+            }
+          }
+          this.groups = groups;
+          this._uniformBindMap = groupMap;
+          this.resources = this._buildResourceAccessor(groups, nameHash);
+        }
+        /**
+         * Sometimes a resource group will be provided later (for example global uniforms)
+         * In such cases, this method can be used to let the shader know about the group.
+         * @param name - the name of the resource group
+         * @param groupIndex - the index of the group (should match the webGPU shader group location)
+         * @param bindIndex - the index of the bind point (should match the webGPU shader bind point)
+         */
+        addResource(name, groupIndex, bindIndex) {
+          var _a, _b;
+          (_a = this._uniformBindMap)[groupIndex] || (_a[groupIndex] = {});
+          (_b = this._uniformBindMap[groupIndex])[bindIndex] || (_b[bindIndex] = name);
+          if (!this.groups[groupIndex]) {
+            this.groups[groupIndex] = new BindGroup();
+            this._ownedBindGroups.push(this.groups[groupIndex]);
+          }
+        }
+        _buildResourceAccessor(groups, nameHash) {
+          const uniformsOut = {};
+          for (const i2 in nameHash) {
+            const data = nameHash[i2];
+            Object.defineProperty(uniformsOut, data.name, {
+              get() {
+                return groups[data.group].getResource(data.binding);
+              },
+              set(value) {
+                groups[data.group].setResource(value, data.binding);
+              }
+            });
+          }
+          return uniformsOut;
+        }
+        /**
+         * Use to destroy the shader when its not longer needed.
+         * It will destroy the resources and remove listeners.
+         * @param destroyPrograms - if the programs should be destroyed as well.
+         * Make sure its not being used by other shaders!
+         */
+        destroy(destroyPrograms = false) {
+          this.emit("destroy", this);
+          if (destroyPrograms) {
+            this.gpuProgram?.destroy();
+            this.glProgram?.destroy();
+          }
+          this.gpuProgram = null;
+          this.glProgram = null;
+          this.removeAllListeners();
+          this._uniformBindMap = null;
+          this._ownedBindGroups.forEach((bindGroup) => {
+            bindGroup.destroy();
+          });
+          this._ownedBindGroups = null;
+          this.resources = null;
+          this.groups = null;
+        }
+        static from(options) {
+          const { gpu, gl, ...rest } = options;
+          let gpuProgram3;
+          let glProgram3;
+          if (gpu) {
+            gpuProgram3 = GpuProgram.from(gpu);
+          }
+          if (gl) {
+            glProgram3 = GlProgram.from(gl);
+          }
+          return new Shader({
+            gpuProgram: gpuProgram3,
+            glProgram: glProgram3,
+            ...rest
+          });
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/batcher/shared/DefaultShader.mjs
+  var DefaultShader;
+  var init_DefaultShader = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/batcher/shared/DefaultShader.mjs"() {
+      init_compileHighShaderToProgram();
+      init_colorBit();
+      init_generateTextureBatchBit();
+      init_roundPixelsBit();
+      init_getBatchSamplersUniformGroup();
+      init_Shader();
+      DefaultShader = class extends Shader {
+        constructor(maxTextures2) {
+          const glProgram3 = compileHighShaderGlProgram({
+            name: "batch",
+            bits: [
+              colorBitGl,
+              generateTextureBatchBitGl(maxTextures2),
+              roundPixelsBitGl
+            ]
+          });
+          const gpuProgram3 = compileHighShaderGpuProgram({
+            name: "batch",
+            bits: [
+              colorBit,
+              generateTextureBatchBit(maxTextures2),
+              roundPixelsBit
+            ]
+          });
+          super({
+            glProgram: glProgram3,
+            gpuProgram: gpuProgram3,
+            resources: {
+              batchSamplers: getBatchSamplersUniformGroup(maxTextures2)
+            }
+          });
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/batcher/shared/DefaultBatcher.mjs
+  var defaultShader, _DefaultBatcher, DefaultBatcher;
+  var init_DefaultBatcher = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/batcher/shared/DefaultBatcher.mjs"() {
+      init_Extensions();
+      init_Batcher();
+      init_BatchGeometry();
+      init_DefaultShader();
+      defaultShader = null;
+      _DefaultBatcher = class _DefaultBatcher2 extends Batcher {
+        constructor() {
+          super(...arguments);
+          this.geometry = new BatchGeometry();
+          this.shader = defaultShader || (defaultShader = new DefaultShader(this.maxTextures));
+          this.name = _DefaultBatcher2.extension.name;
+          this.vertexSize = 6;
+        }
+        /**
+         * Packs the attributes of a DefaultBatchableMeshElement into the provided views.
+         * @param element - The DefaultBatchableMeshElement to pack.
+         * @param float32View - The Float32Array view to pack into.
+         * @param uint32View - The Uint32Array view to pack into.
+         * @param index - The starting index in the views.
+         * @param textureId - The texture ID to use.
+         */
+        packAttributes(element2, float32View, uint32View, index, textureId) {
+          const textureIdAndRound = textureId << 16 | element2.roundPixels & 65535;
+          const wt = element2.transform;
+          const a2 = wt.a;
+          const b2 = wt.b;
+          const c2 = wt.c;
+          const d2 = wt.d;
+          const tx = wt.tx;
+          const ty = wt.ty;
+          const { positions, uvs } = element2;
+          const argb = element2.color;
+          const offset = element2.attributeOffset;
+          const end = offset + element2.attributeSize;
+          for (let i2 = offset; i2 < end; i2++) {
+            const i22 = i2 * 2;
+            const x2 = positions[i22];
+            const y2 = positions[i22 + 1];
+            float32View[index++] = a2 * x2 + c2 * y2 + tx;
+            float32View[index++] = d2 * y2 + b2 * x2 + ty;
+            float32View[index++] = uvs[i22];
+            float32View[index++] = uvs[i22 + 1];
+            uint32View[index++] = argb;
+            uint32View[index++] = textureIdAndRound;
+          }
+        }
+        /**
+         * Packs the attributes of a DefaultBatchableQuadElement into the provided views.
+         * @param element - The DefaultBatchableQuadElement to pack.
+         * @param float32View - The Float32Array view to pack into.
+         * @param uint32View - The Uint32Array view to pack into.
+         * @param index - The starting index in the views.
+         * @param textureId - The texture ID to use.
+         */
+        packQuadAttributes(element2, float32View, uint32View, index, textureId) {
+          const texture = element2.texture;
+          const wt = element2.transform;
+          const a2 = wt.a;
+          const b2 = wt.b;
+          const c2 = wt.c;
+          const d2 = wt.d;
+          const tx = wt.tx;
+          const ty = wt.ty;
+          const bounds = element2.bounds;
+          const w0 = bounds.maxX;
+          const w1 = bounds.minX;
+          const h0 = bounds.maxY;
+          const h1 = bounds.minY;
+          const uvs = texture.uvs;
+          const argb = element2.color;
+          const textureIdAndRound = textureId << 16 | element2.roundPixels & 65535;
+          float32View[index + 0] = a2 * w1 + c2 * h1 + tx;
+          float32View[index + 1] = d2 * h1 + b2 * w1 + ty;
+          float32View[index + 2] = uvs.x0;
+          float32View[index + 3] = uvs.y0;
+          uint32View[index + 4] = argb;
+          uint32View[index + 5] = textureIdAndRound;
+          float32View[index + 6] = a2 * w0 + c2 * h1 + tx;
+          float32View[index + 7] = d2 * h1 + b2 * w0 + ty;
+          float32View[index + 8] = uvs.x1;
+          float32View[index + 9] = uvs.y1;
+          uint32View[index + 10] = argb;
+          uint32View[index + 11] = textureIdAndRound;
+          float32View[index + 12] = a2 * w0 + c2 * h0 + tx;
+          float32View[index + 13] = d2 * h0 + b2 * w0 + ty;
+          float32View[index + 14] = uvs.x2;
+          float32View[index + 15] = uvs.y2;
+          uint32View[index + 16] = argb;
+          uint32View[index + 17] = textureIdAndRound;
+          float32View[index + 18] = a2 * w1 + c2 * h0 + tx;
+          float32View[index + 19] = d2 * h0 + b2 * w1 + ty;
+          float32View[index + 20] = uvs.x3;
+          float32View[index + 21] = uvs.y3;
+          uint32View[index + 22] = argb;
+          uint32View[index + 23] = textureIdAndRound;
+        }
+      };
+      _DefaultBatcher.extension = {
+        type: [
+          ExtensionType.Batcher
+        ],
+        name: "default"
+      };
+      DefaultBatcher = _DefaultBatcher;
     }
   });
 
@@ -12300,16 +14347,29 @@ Deprecated since v${version}`);
   });
 
   // ../core/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
-  var BatchableGraphics;
+  var identityMatrix2, BatchableGraphics;
   var init_BatchableGraphics = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs"() {
+      init_Matrix();
       init_multiplyHexColors();
+      identityMatrix2 = new Matrix();
       BatchableGraphics = class {
         constructor() {
-          this.batcher = null;
-          this.batch = null;
+          this.packAsQuad = false;
+          this.batcherName = "default";
           this.applyTransform = true;
           this.roundPixels = 0;
+          this._batcher = null;
+          this._batch = null;
+        }
+        get uvs() {
+          return this.geometryData.uvs;
+        }
+        get positions() {
+          return this.geometryData.vertices;
+        }
+        get indices() {
+          return this.geometryData.indices;
         }
         get blendMode() {
           if (this.applyTransform) {
@@ -12317,82 +14377,46 @@ Deprecated since v${version}`);
           }
           return "normal";
         }
-        packIndex(indexBuffer, index, indicesOffset) {
-          const indices = this.geometryData.indices;
-          for (let i2 = 0; i2 < this.indexSize; i2++) {
-            indexBuffer[index++] = indices[i2 + this.indexOffset] + indicesOffset - this.vertexOffset;
-          }
-        }
-        packAttributes(float32View, uint32View, index, textureId) {
-          const geometry = this.geometryData;
-          const graphics = this.renderable;
-          const positions = geometry.vertices;
-          const uvs = geometry.uvs;
-          const offset = this.vertexOffset * 2;
-          const vertSize = (this.vertexOffset + this.vertexSize) * 2;
-          const rgb = this.color;
+        get color() {
+          const rgb = this.baseColor;
           const bgr = rgb >> 16 | rgb & 65280 | (rgb & 255) << 16;
-          if (this.applyTransform) {
-            const argb = multiplyHexColors(bgr, graphics.groupColor) + (this.alpha * graphics.groupAlpha * 255 << 24);
-            const wt = graphics.groupTransform;
-            const textureIdAndRound = textureId << 16 | this.roundPixels & 65535;
-            const a2 = wt.a;
-            const b2 = wt.b;
-            const c2 = wt.c;
-            const d2 = wt.d;
-            const tx = wt.tx;
-            const ty = wt.ty;
-            for (let i2 = offset; i2 < vertSize; i2 += 2) {
-              const x2 = positions[i2];
-              const y2 = positions[i2 + 1];
-              float32View[index] = a2 * x2 + c2 * y2 + tx;
-              float32View[index + 1] = b2 * x2 + d2 * y2 + ty;
-              float32View[index + 2] = uvs[i2];
-              float32View[index + 3] = uvs[i2 + 1];
-              uint32View[index + 4] = argb;
-              uint32View[index + 5] = textureIdAndRound;
-              index += 6;
-            }
-          } else {
-            const argb = bgr + (this.alpha * 255 << 24);
-            for (let i2 = offset; i2 < vertSize; i2 += 2) {
-              float32View[index] = positions[i2];
-              float32View[index + 1] = positions[i2 + 1];
-              float32View[index + 2] = uvs[i2];
-              float32View[index + 3] = uvs[i2 + 1];
-              uint32View[index + 4] = argb;
-              uint32View[index + 5] = textureId << 16;
-              index += 6;
-            }
+          const renderable = this.renderable;
+          if (renderable) {
+            return multiplyHexColors(bgr, renderable.groupColor) + (this.alpha * renderable.groupAlpha * 255 << 24);
           }
+          return bgr + (this.alpha * 255 << 24);
         }
-        // TODO rename to vertexSize
-        get vertSize() {
-          return this.vertexSize;
+        get transform() {
+          return this.renderable?.groupTransform || identityMatrix2;
         }
         copyTo(gpuBuffer) {
           gpuBuffer.indexOffset = this.indexOffset;
           gpuBuffer.indexSize = this.indexSize;
-          gpuBuffer.vertexOffset = this.vertexOffset;
-          gpuBuffer.vertexSize = this.vertexSize;
-          gpuBuffer.color = this.color;
+          gpuBuffer.attributeOffset = this.attributeOffset;
+          gpuBuffer.attributeSize = this.attributeSize;
+          gpuBuffer.baseColor = this.baseColor;
           gpuBuffer.alpha = this.alpha;
           gpuBuffer.texture = this.texture;
           gpuBuffer.geometryData = this.geometryData;
         }
         reset() {
           this.applyTransform = true;
+          this.renderable = null;
         }
       };
     }
   });
 
   // ../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildCircle.mjs
-  var buildCircle;
+  var buildCircle, buildEllipse, buildRoundedRectangle;
   var init_buildCircle = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildCircle.mjs"() {
-      "use strict";
+      init_Extensions();
       buildCircle = {
+        extension: {
+          type: ExtensionType.ShapeBuilder,
+          name: "circle"
+        },
         build(shape, points) {
           let x2;
           let y2;
@@ -12524,12 +14548,14 @@ Deprecated since v${version}`);
           indices[indicesOffset++] = count2 - 1;
         }
       };
+      buildEllipse = { ...buildCircle, extension: { ...buildCircle.extension, name: "ellipse" } };
+      buildRoundedRectangle = { ...buildCircle, extension: { ...buildCircle.extension, name: "roundedRectangle" } };
     }
   });
 
   // ../core/node_modules/pixi.js/lib/scene/graphics/shared/const.mjs
   var closePointEps, curveEps;
-  var init_const5 = __esm({
+  var init_const6 = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/const.mjs"() {
       "use strict";
       closePointEps = 1e-4;
@@ -12921,7 +14947,7 @@ Deprecated since v${version}`);
   var init_buildLine = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildLine.mjs"() {
       init_Point();
-      init_const5();
+      init_const6();
       init_getOrientationOfPoints();
     }
   });
@@ -13421,9 +15447,14 @@ Deprecated since v${version}`);
   var emptyArray, buildPolygon;
   var init_buildPolygon = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildPolygon.mjs"() {
+      init_Extensions();
       init_triangulateWithHoles();
       emptyArray = [];
       buildPolygon = {
+        extension: {
+          type: ExtensionType.ShapeBuilder,
+          name: "polygon"
+        },
         build(shape, points) {
           for (let i2 = 0; i2 < shape.points.length; i2++) {
             points[i2] = shape.points[i2];
@@ -13441,8 +15472,12 @@ Deprecated since v${version}`);
   var buildRectangle;
   var init_buildRectangle = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildRectangle.mjs"() {
-      "use strict";
+      init_Extensions();
       buildRectangle = {
+        extension: {
+          type: ExtensionType.ShapeBuilder,
+          name: "rectangle"
+        },
         build(shape, points) {
           const rectData = shape;
           const x2 = rectData.x;
@@ -13493,8 +15528,12 @@ Deprecated since v${version}`);
   var buildTriangle;
   var init_buildTriangle = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/buildCommands/buildTriangle.mjs"() {
-      "use strict";
+      init_Extensions();
       buildTriangle = {
+        extension: {
+          type: ExtensionType.ShapeBuilder,
+          name: "triangle"
+        },
         build(shape, points) {
           points[0] = shape.x;
           points[1] = shape.y;
@@ -13552,7 +15591,7 @@ Deprecated since v${version}`);
     const indexOffset = indices.length;
     const vertOffset = vertices.length / 2;
     const points = [];
-    const build = buildMap.rectangle;
+    const build = shapeBuilders.rectangle;
     const rect = tempRect;
     const texture = data.image;
     rect.x = data.dx;
@@ -13579,9 +15618,9 @@ Deprecated since v${version}`);
     const graphicsBatch = BigPool.get(BatchableGraphics);
     graphicsBatch.indexOffset = indexOffset;
     graphicsBatch.indexSize = indices.length - indexOffset;
-    graphicsBatch.vertexOffset = vertOffset;
-    graphicsBatch.vertexSize = vertices.length / 2 - vertOffset;
-    graphicsBatch.color = data.style;
+    graphicsBatch.attributeOffset = vertOffset;
+    graphicsBatch.attributeSize = vertices.length / 2 - vertOffset;
+    graphicsBatch.baseColor = data.style;
     graphicsBatch.alpha = data.alpha;
     graphicsBatch.texture = texture;
     graphicsBatch.geometryData = geometryData;
@@ -13594,7 +15633,7 @@ Deprecated since v${version}`);
       const indexOffset = indices.length;
       const vertOffset = vertices.length / 2;
       const points = [];
-      const build = buildMap[shape.type];
+      const build = shapeBuilders[shape.type];
       build.build(shape, points);
       if (matrix) {
         transformVertices(points, matrix);
@@ -13624,19 +15663,21 @@ Deprecated since v${version}`);
       const texture = style.texture;
       if (texture !== Texture.WHITE) {
         const textureMatrix = style.matrix;
-        if (matrix && textureMatrix) {
-          textureMatrix.append(matrix.clone().invert());
+        if (textureMatrix) {
+          if (matrix) {
+            textureMatrix.append(matrix.clone().invert());
+          }
+          buildUvs(vertices, 2, vertOffset, uvs, uvsOffset, 2, vertices.length / 2 - vertOffset, textureMatrix);
         }
-        buildUvs(vertices, 2, vertOffset, uvs, uvsOffset, 2, vertices.length / 2 - vertOffset, textureMatrix);
       } else {
         buildSimpleUvs(uvs, uvsOffset, 2, vertices.length / 2 - vertOffset);
       }
       const graphicsBatch = BigPool.get(BatchableGraphics);
       graphicsBatch.indexOffset = indexOffset;
       graphicsBatch.indexSize = indices.length - indexOffset;
-      graphicsBatch.vertexOffset = vertOffset;
-      graphicsBatch.vertexSize = vertices.length / 2 - vertOffset;
-      graphicsBatch.color = style.color;
+      graphicsBatch.attributeOffset = vertOffset;
+      graphicsBatch.attributeSize = vertices.length / 2 - vertOffset;
+      graphicsBatch.baseColor = style.color;
       graphicsBatch.alpha = style.alpha;
       graphicsBatch.texture = texture;
       graphicsBatch.geometryData = geometryData;
@@ -13651,15 +15692,16 @@ Deprecated since v${version}`);
     for (let k2 = 0; k2 < holePrimitives.length; k2++) {
       const holePrimitive = holePrimitives[k2].shape;
       const holePoints = [];
-      const holeBuilder = buildMap[holePrimitive.type];
+      const holeBuilder = shapeBuilders[holePrimitive.type];
       holeBuilder.build(holePrimitive, holePoints);
       holeArrays.push(holePoints);
     }
     return holeArrays;
   }
-  var buildMap, tempRect;
+  var shapeBuilders, tempRect;
   var init_buildContextBatches = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/utils/buildContextBatches.mjs"() {
+      init_Extensions();
       init_Rectangle();
       init_buildUvs();
       init_transformVertices();
@@ -13672,14 +15714,9 @@ Deprecated since v${version}`);
       init_buildRectangle();
       init_buildTriangle();
       init_triangulateWithHoles();
-      buildMap = {
-        rectangle: buildRectangle,
-        polygon: buildPolygon,
-        triangle: buildTriangle,
-        circle: buildCircle,
-        ellipse: buildCircle,
-        roundedRectangle: buildCircle
-      };
+      shapeBuilders = {};
+      extensions.handleByMap(ExtensionType.ShapeBuilder, shapeBuilders);
+      extensions.add(buildRectangle, buildPolygon, buildTriangle, buildCircle, buildEllipse, buildRoundedRectangle);
       tempRect = new Rectangle();
     }
   });
@@ -13689,10 +15726,10 @@ Deprecated since v${version}`);
   var init_GraphicsContextSystem = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/GraphicsContextSystem.mjs"() {
       init_Extensions();
-      init_BatchGeometry();
       init_getTextureBatchBindGroup();
-      init_Batcher();
+      init_DefaultBatcher();
       init_InstructionSet();
+      init_deprecation();
       init_PoolGroup();
       init_buildContextBatches();
       GpuGraphicsContext = class {
@@ -13707,18 +15744,28 @@ Deprecated since v${version}`);
       };
       GraphicsContextRenderData = class {
         constructor() {
-          this.geometry = new BatchGeometry();
+          this.batcher = new DefaultBatcher();
           this.instructions = new InstructionSet();
         }
         init() {
           this.instructions.reset();
         }
+        /**
+         * @deprecated since version 8.0.0
+         * Use `batcher.geometry` instead.
+         * @see {Batcher#geometry}
+         */
+        get geometry() {
+          deprecation(v8_3_4, "GraphicsContextRenderData#geometry is deprecated, please use batcher.geometry instead.");
+          return this.batcher.geometry;
+        }
       };
       _GraphicsContextSystem = class _GraphicsContextSystem2 {
-        constructor() {
-          this._activeBatchers = [];
+        constructor(renderer) {
           this._gpuContextHash = {};
           this._graphicsDataContextHash = /* @__PURE__ */ Object.create(null);
+          renderer.renderableGC.addManagedHash(this, "_gpuContextHash");
+          renderer.renderableGC.addManagedHash(this, "_graphicsDataContextHash");
         }
         /**
          * Runner init called, update the default options
@@ -13726,9 +15773,6 @@ Deprecated since v${version}`);
          */
         init(options) {
           _GraphicsContextSystem2.defaultOptions.bezierSmoothness = options?.bezierSmoothness ?? _GraphicsContextSystem2.defaultOptions.bezierSmoothness;
-        }
-        prerender() {
-          this._returnActiveBatchers();
         }
         getContextRenderData(context4) {
           return this._graphicsDataContextHash[context4.uid] || this._initContextRenderData(context4);
@@ -13756,12 +15800,6 @@ Deprecated since v${version}`);
         getGpuContext(context4) {
           return this._gpuContextHash[context4.uid] || this._initContext(context4);
         }
-        _returnActiveBatchers() {
-          for (let i2 = 0; i2 < this._activeBatchers.length; i2++) {
-            BigPool.return(this._activeBatchers[i2]);
-          }
-          this._activeBatchers.length = 0;
-        }
         _initContextRenderData(context4) {
           const graphicsData = BigPool.get(GraphicsContextRenderData);
           const { batches, geometryData } = this._gpuContextHash[context4.uid];
@@ -13770,8 +15808,7 @@ Deprecated since v${version}`);
           for (let i2 = 0; i2 < batches.length; i2++) {
             batches[i2].applyTransform = false;
           }
-          const batcher = BigPool.get(Batcher);
-          this._activeBatchers.push(batcher);
+          const batcher = graphicsData.batcher;
           batcher.ensureAttributeBuffer(vertexSize);
           batcher.ensureIndexBuffer(indexSize);
           batcher.begin();
@@ -13780,7 +15817,7 @@ Deprecated since v${version}`);
             batcher.add(batch);
           }
           batcher.finish(graphicsData.instructions);
-          const geometry = graphicsData.geometry;
+          const geometry = batcher.geometry;
           geometry.indexBuffer.setDataWithSize(batcher.indexBuffer, batcher.indexSize, true);
           geometry.buffers[0].setDataWithSize(batcher.attributeBuffer.float32View, batcher.attributeSize, true);
           const drawBatches = batcher.batches;
@@ -13858,7 +15895,9 @@ Deprecated since v${version}`);
         erase: 5,
         "normal-npm": 6,
         "add-npm": 7,
-        "screen-npm": 8
+        "screen-npm": 8,
+        min: 9,
+        max: 10
       };
       BLEND = 0;
       OFFSET = 1;
@@ -14031,9 +16070,11 @@ Deprecated since v${version}`);
         constructor(renderer, adaptor) {
           this.state = State.for2d();
           this._graphicsBatchesHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this.renderer = renderer;
           this._adaptor = adaptor;
           this._adaptor.init();
+          this.renderer.renderableGC.addManagedHash(this, "_graphicsBatchesHash");
         }
         validateRenderable(graphics) {
           const context4 = graphics.context;
@@ -14046,8 +16087,7 @@ Deprecated since v${version}`);
         }
         addRenderable(graphics, instructionSet) {
           const gpuContext = this.renderer.graphicsContext.updateGpuContext(graphics.context);
-          if (graphics._didGraphicsUpdate) {
-            graphics._didGraphicsUpdate = false;
+          if (graphics.didViewUpdate) {
             this._rebuild(graphics);
           }
           if (gpuContext.isBatchable) {
@@ -14062,7 +16102,7 @@ Deprecated since v${version}`);
           if (batches) {
             for (let i2 = 0; i2 < batches.length; i2++) {
               const batch = batches[i2];
-              batch.batcher.updateElement(batch);
+              batch._batcher.updateElement(batch);
             }
           }
         }
@@ -14070,6 +16110,7 @@ Deprecated since v${version}`);
           if (this._graphicsBatchesHash[graphics.uid]) {
             this._removeBatchForRenderable(graphics.uid);
           }
+          graphics.off("destroyed", this._destroyRenderableBound);
         }
         execute(graphics) {
           if (!graphics.isRenderable)
@@ -14126,9 +16167,7 @@ Deprecated since v${version}`);
             return batchClone;
           });
           if (this._graphicsBatchesHash[graphics.uid] === void 0) {
-            graphics.on("destroyed", () => {
-              this.destroyRenderable(graphics);
-            });
+            graphics.on("destroyed", this._destroyRenderableBound);
           }
           this._graphicsBatchesHash[graphics.uid] = batches;
           return batches;
@@ -14172,170 +16211,6 @@ Deprecated since v${version}`);
     }
   });
 
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/utils/createIdFromString.mjs
-  function createIdFromString(value, groupId) {
-    let id = idHash2[value];
-    if (id === void 0) {
-      if (idCounts[groupId] === void 0) {
-        idCounts[groupId] = 1;
-      }
-      idHash2[value] = id = idCounts[groupId]++;
-    }
-    return id;
-  }
-  var idCounts, idHash2;
-  var init_createIdFromString = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/utils/createIdFromString.mjs"() {
-      "use strict";
-      idCounts = /* @__PURE__ */ Object.create(null);
-      idHash2 = /* @__PURE__ */ Object.create(null);
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/types.mjs
-  var UNIFORM_TYPES_VALUES, UNIFORM_TYPES_MAP;
-  var init_types = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/types.mjs"() {
-      "use strict";
-      UNIFORM_TYPES_VALUES = [
-        "f32",
-        "i32",
-        "vec2<f32>",
-        "vec3<f32>",
-        "vec4<f32>",
-        "mat2x2<f32>",
-        "mat3x3<f32>",
-        "mat4x4<f32>",
-        "mat3x2<f32>",
-        "mat4x2<f32>",
-        "mat2x3<f32>",
-        "mat4x3<f32>",
-        "mat2x4<f32>",
-        "mat3x4<f32>"
-      ];
-      UNIFORM_TYPES_MAP = UNIFORM_TYPES_VALUES.reduce((acc, type) => {
-        acc[type] = true;
-        return acc;
-      }, {});
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/utils/getDefaultUniformValue.mjs
-  function getDefaultUniformValue(type, size) {
-    switch (type) {
-      case "f32":
-        return 0;
-      case "vec2<f32>":
-        return new Float32Array(2 * size);
-      case "vec3<f32>":
-        return new Float32Array(3 * size);
-      case "vec4<f32>":
-        return new Float32Array(4 * size);
-      case "mat2x2<f32>":
-        return new Float32Array([
-          1,
-          0,
-          0,
-          1
-        ]);
-      case "mat3x3<f32>":
-        return new Float32Array([
-          1,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          1
-        ]);
-      case "mat4x4<f32>":
-        return new Float32Array([
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1,
-          0,
-          0,
-          0,
-          0,
-          1
-        ]);
-    }
-    return null;
-  }
-  var init_getDefaultUniformValue = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/utils/getDefaultUniformValue.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/UniformGroup.mjs
-  var _UniformGroup, UniformGroup;
-  var init_UniformGroup = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/UniformGroup.mjs"() {
-      init_uid();
-      init_createIdFromString();
-      init_types();
-      init_getDefaultUniformValue();
-      _UniformGroup = class _UniformGroup2 {
-        /**
-         * Create a new Uniform group
-         * @param uniformStructures - The structures of the uniform group
-         * @param options - The optional parameters of this uniform group
-         */
-        constructor(uniformStructures, options) {
-          this._touched = 0;
-          this.uid = uid("uniform");
-          this._resourceType = "uniformGroup";
-          this._resourceId = uid("resource");
-          this.isUniformGroup = true;
-          this._dirtyId = 0;
-          this.destroyed = false;
-          options = { ..._UniformGroup2.defaultOptions, ...options };
-          this.uniformStructures = uniformStructures;
-          const uniforms = {};
-          for (const i2 in uniformStructures) {
-            const uniformData = uniformStructures[i2];
-            uniformData.name = i2;
-            uniformData.size = uniformData.size ?? 1;
-            if (!UNIFORM_TYPES_MAP[uniformData.type]) {
-              throw new Error(`Uniform type ${uniformData.type} is not supported. Supported uniform types are: ${UNIFORM_TYPES_VALUES.join(", ")}`);
-            }
-            uniformData.value ?? (uniformData.value = getDefaultUniformValue(uniformData.type, uniformData.size));
-            uniforms[i2] = uniformData.value;
-          }
-          this.uniforms = uniforms;
-          this._dirtyId = 1;
-          this.ubo = options.ubo;
-          this.isStatic = options.isStatic;
-          this._signature = createIdFromString(Object.keys(uniforms).map(
-            (i2) => `${i2}-${uniformStructures[i2].type}`
-          ).join("-"), "uniform-group");
-        }
-        /** Call this if you want the uniform groups data to be uploaded to the GPU only useful if `isStatic` is true. */
-        update() {
-          this._dirtyId++;
-        }
-      };
-      _UniformGroup.defaultOptions = {
-        /** if true the UniformGroup is handled as an Uniform buffer object. */
-        ubo: false,
-        /** if true, then you are responsible for when the data is uploaded to the GPU by calling `update()` */
-        isStatic: false
-      };
-      UniformGroup = _UniformGroup;
-    }
-  });
-
   // ../core/node_modules/pixi.js/lib/scene/mesh/shared/BatchableMesh.mjs
   var BatchableMesh;
   var init_BatchableMesh = __esm({
@@ -14343,39 +16218,30 @@ Deprecated since v${version}`);
       "use strict";
       BatchableMesh = class {
         constructor() {
-          this.batcher = null;
-          this.batch = null;
+          this.batcherName = "default";
+          this.packAsQuad = false;
+          this.indexOffset = 0;
+          this.attributeOffset = 0;
           this.roundPixels = 0;
+          this._batcher = null;
+          this._batch = null;
           this._uvUpdateId = -1;
           this._textureMatrixUpdateId = -1;
         }
         get blendMode() {
-          return this.mesh.groupBlendMode;
+          return this.renderable.groupBlendMode;
         }
         reset() {
-          this.mesh = null;
+          this.renderable = null;
           this.texture = null;
-          this.batcher = null;
-          this.batch = null;
+          this._batcher = null;
+          this._batch = null;
+          this.geometry = null;
+          this._uvUpdateId = -1;
+          this._textureMatrixUpdateId = -1;
         }
-        packIndex(indexBuffer, index, indicesOffset) {
-          const indices = this.geometry.indices;
-          for (let i2 = 0; i2 < indices.length; i2++) {
-            indexBuffer[index++] = indices[i2] + indicesOffset;
-          }
-        }
-        packAttributes(float32View, uint32View, index, textureId) {
-          const mesh = this.mesh;
+        get uvs() {
           const geometry = this.geometry;
-          const wt = mesh.groupTransform;
-          const textureIdAndRound = textureId << 16 | this.roundPixels & 65535;
-          const a2 = wt.a;
-          const b2 = wt.b;
-          const c2 = wt.c;
-          const d2 = wt.d;
-          const tx = wt.tx;
-          const ty = wt.ty;
-          const positions = geometry.positions;
           const uvBuffer = geometry.getBuffer("aUV");
           const uvs = uvBuffer.data;
           let transformedUvs = uvs;
@@ -14391,20 +16257,21 @@ Deprecated since v${version}`);
               textureMatrix.multiplyUvs(uvs, transformedUvs);
             }
           }
-          const abgr = mesh.groupColorAlpha;
-          for (let i2 = 0; i2 < positions.length; i2 += 2) {
-            const x2 = positions[i2];
-            const y2 = positions[i2 + 1];
-            float32View[index] = a2 * x2 + c2 * y2 + tx;
-            float32View[index + 1] = b2 * x2 + d2 * y2 + ty;
-            float32View[index + 2] = transformedUvs[i2];
-            float32View[index + 3] = transformedUvs[i2 + 1];
-            uint32View[index + 4] = abgr;
-            uint32View[index + 5] = textureIdAndRound;
-            index += 6;
-          }
+          return transformedUvs;
         }
-        get vertexSize() {
+        get positions() {
+          return this.geometry.positions;
+        }
+        get indices() {
+          return this.geometry.indices;
+        }
+        get color() {
+          return this.renderable.groupColorAlpha;
+        }
+        get groupTransform() {
+          return this.renderable.groupTransform;
+        }
+        get attributeSize() {
           return this.geometry.positions.length / 2;
         }
         get indexSize() {
@@ -14422,6 +16289,7 @@ Deprecated since v${version}`);
       init_Matrix();
       init_BindGroup();
       init_UniformGroup();
+      init_getAdjustedBlendModeBlend();
       init_PoolGroup();
       init_colorToUniform();
       init_BatchableMesh();
@@ -14437,9 +16305,12 @@ Deprecated since v${version}`);
           });
           this._meshDataHash = /* @__PURE__ */ Object.create(null);
           this._gpuBatchableMeshHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this.renderer = renderer;
           this._adaptor = adaptor;
           this._adaptor.init();
+          renderer.renderableGC.addManagedHash(this, "_gpuBatchableMeshHash");
+          renderer.renderableGC.addManagedHash(this, "_meshDataHash");
         }
         validateRenderable(mesh) {
           const meshData = this._getMeshData(mesh);
@@ -14459,7 +16330,7 @@ Deprecated since v${version}`);
             const texture = mesh.texture;
             if (batchableMesh.texture._source !== texture._source) {
               if (batchableMesh.texture._source !== texture._source) {
-                return !batchableMesh.batcher.checkAndUpdateTexture(batchableMesh, texture);
+                return !batchableMesh._batcher.checkAndUpdateTexture(batchableMesh, texture);
               }
             }
           }
@@ -14472,13 +16343,10 @@ Deprecated since v${version}`);
             const gpuBatchableMesh = this._getBatchableMesh(mesh);
             gpuBatchableMesh.texture = mesh._texture;
             gpuBatchableMesh.geometry = mesh._geometry;
-            batcher.addToBatch(gpuBatchableMesh);
+            batcher.addToBatch(gpuBatchableMesh, instructionSet);
           } else {
             batcher.break(instructionSet);
-            instructionSet.add({
-              renderPipeId: "mesh",
-              mesh
-            });
+            instructionSet.add(mesh);
           }
         }
         updateRenderable(mesh) {
@@ -14486,7 +16354,7 @@ Deprecated since v${version}`);
             const gpuBatchableMesh = this._gpuBatchableMeshHash[mesh.uid];
             gpuBatchableMesh.texture = mesh._texture;
             gpuBatchableMesh.geometry = mesh._geometry;
-            gpuBatchableMesh.batcher.updateElement(gpuBatchableMesh);
+            gpuBatchableMesh._batcher.updateElement(gpuBatchableMesh);
           }
         }
         destroyRenderable(mesh) {
@@ -14496,11 +16364,12 @@ Deprecated since v${version}`);
             BigPool.return(gpuMesh);
             this._gpuBatchableMeshHash[mesh.uid] = null;
           }
+          mesh.off("destroyed", this._destroyRenderableBound);
         }
-        execute({ mesh }) {
+        execute(mesh) {
           if (!mesh.isRenderable)
             return;
-          mesh.state.blendMode = mesh.groupBlendMode;
+          mesh.state.blendMode = getAdjustedBlendModeBlend(mesh.groupBlendMode, mesh.texture._source);
           const localUniforms = this.localUniforms;
           localUniforms.uniforms.uTransformMatrix = mesh.groupTransform;
           localUniforms.uniforms.uRound = this.renderer._roundPixels | mesh._roundPixels;
@@ -14521,9 +16390,7 @@ Deprecated since v${version}`);
             indexSize: mesh._geometry.indices?.length,
             vertexSize: mesh._geometry.positions?.length
           };
-          mesh.on("destroyed", () => {
-            this.destroyRenderable(mesh);
-          });
+          mesh.on("destroyed", this._destroyRenderableBound);
           return this._meshDataHash[mesh.uid];
         }
         _getBatchableMesh(mesh) {
@@ -14531,11 +16398,11 @@ Deprecated since v${version}`);
         }
         _initBatchableMesh(mesh) {
           const gpuMesh = BigPool.get(BatchableMesh);
-          gpuMesh.mesh = mesh;
+          gpuMesh.renderable = mesh;
           gpuMesh.texture = mesh._texture;
+          gpuMesh.transform = mesh.groupTransform;
           gpuMesh.roundPixels = this.renderer._roundPixels | mesh._roundPixels;
           this._gpuBatchableMeshHash[mesh.uid] = gpuMesh;
-          gpuMesh.mesh = mesh;
           return gpuMesh;
         }
         destroy() {
@@ -14573,6 +16440,481 @@ Deprecated since v${version}`);
     }
   });
 
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/gl/GlParticleContainerAdaptor.mjs
+  var GlParticleContainerAdaptor;
+  var init_GlParticleContainerAdaptor = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/gl/GlParticleContainerAdaptor.mjs"() {
+      "use strict";
+      GlParticleContainerAdaptor = class {
+        execute(particleContainerPop, container) {
+          const state = particleContainerPop.state;
+          const renderer = particleContainerPop.renderer;
+          const shader = container.shader || particleContainerPop.defaultShader;
+          shader.resources.uTexture = container.texture._source;
+          shader.resources.uniforms = particleContainerPop.localUniforms;
+          const gl = renderer.gl;
+          const buffer = particleContainerPop.getBuffers(container);
+          renderer.shader.bind(shader);
+          renderer.state.set(state);
+          renderer.geometry.bind(buffer.geometry, shader.glProgram);
+          const byteSize = buffer.geometry.indexBuffer.data.BYTES_PER_ELEMENT;
+          const glType = byteSize === 2 ? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT;
+          gl.drawElements(gl.TRIANGLES, container.particleChildren.length * 6, glType, 0);
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/utils/createIndicesForQuads.mjs
+  function createIndicesForQuads(size, outBuffer = null) {
+    const totalIndices = size * 6;
+    if (totalIndices > 65535) {
+      outBuffer = outBuffer || new Uint32Array(totalIndices);
+    } else {
+      outBuffer = outBuffer || new Uint16Array(totalIndices);
+    }
+    if (outBuffer.length !== totalIndices) {
+      throw new Error(`Out buffer length is incorrect, got ${outBuffer.length} and expected ${totalIndices}`);
+    }
+    for (let i2 = 0, j2 = 0; i2 < totalIndices; i2 += 6, j2 += 4) {
+      outBuffer[i2 + 0] = j2 + 0;
+      outBuffer[i2 + 1] = j2 + 1;
+      outBuffer[i2 + 2] = j2 + 2;
+      outBuffer[i2 + 3] = j2 + 0;
+      outBuffer[i2 + 4] = j2 + 2;
+      outBuffer[i2 + 5] = j2 + 3;
+    }
+    return outBuffer;
+  }
+  var init_createIndicesForQuads = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/utils/createIndicesForQuads.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/utils/generateParticleUpdateFunction.mjs
+  function generateParticleUpdateFunction(properties) {
+    return {
+      dynamicUpdate: generateUpdateFunction(properties, true),
+      staticUpdate: generateUpdateFunction(properties, false)
+    };
+  }
+  function generateUpdateFunction(properties, dynamic) {
+    const funcFragments = [];
+    funcFragments.push(`
+      
+        var index = 0;
+
+        for (let i = 0; i < ps.length; ++i)
+        {
+            const p = ps[i];
+
+            `);
+    let offset = 0;
+    for (const i2 in properties) {
+      const property = properties[i2];
+      if (dynamic !== property.dynamic)
+        continue;
+      funcFragments.push(`offset = index + ${offset}`);
+      funcFragments.push(property.code);
+      const attributeInfo = getAttributeInfoFromFormat(property.format);
+      offset += attributeInfo.stride / 4;
+    }
+    funcFragments.push(`
+            index += stride * 4;
+        }
+    `);
+    funcFragments.unshift(`
+        var stride = ${offset};
+    `);
+    const functionSource = funcFragments.join("\n");
+    return new Function("ps", "f32v", "u32v", functionSource);
+  }
+  var init_generateParticleUpdateFunction = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/utils/generateParticleUpdateFunction.mjs"() {
+      init_getAttributeInfoFromFormat();
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/ParticleBuffer.mjs
+  function getParticleSyncKey(properties) {
+    const keyGen = [];
+    for (const key in properties) {
+      const property = properties[key];
+      keyGen.push(key, property.code, property.dynamic ? "d" : "s");
+    }
+    return keyGen.join("_");
+  }
+  var ParticleBuffer;
+  var init_ParticleBuffer = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/ParticleBuffer.mjs"() {
+      init_Buffer();
+      init_const4();
+      init_Geometry();
+      init_getAttributeInfoFromFormat();
+      init_ViewableBuffer();
+      init_createIndicesForQuads();
+      init_generateParticleUpdateFunction();
+      ParticleBuffer = class {
+        constructor(options) {
+          this._size = 0;
+          this._generateParticleUpdateCache = {};
+          const size = this._size = options.size ?? 1e3;
+          const properties = options.properties;
+          let staticVertexSize = 0;
+          let dynamicVertexSize = 0;
+          for (const i2 in properties) {
+            const property = properties[i2];
+            const attributeInfo = getAttributeInfoFromFormat(property.format);
+            if (property.dynamic) {
+              dynamicVertexSize += attributeInfo.stride;
+            } else {
+              staticVertexSize += attributeInfo.stride;
+            }
+          }
+          this._dynamicStride = dynamicVertexSize / 4;
+          this._staticStride = staticVertexSize / 4;
+          this.staticAttributeBuffer = new ViewableBuffer(size * 4 * staticVertexSize);
+          this.dynamicAttributeBuffer = new ViewableBuffer(size * 4 * dynamicVertexSize);
+          this.indexBuffer = createIndicesForQuads(size);
+          const geometry = new Geometry();
+          let dynamicOffset = 0;
+          let staticOffset = 0;
+          this._staticBuffer = new Buffer2({
+            data: new Float32Array(1),
+            label: "static-particle-buffer",
+            shrinkToFit: false,
+            usage: BufferUsage.VERTEX | BufferUsage.COPY_DST
+          });
+          this._dynamicBuffer = new Buffer2({
+            data: new Float32Array(1),
+            label: "dynamic-particle-buffer",
+            shrinkToFit: false,
+            usage: BufferUsage.VERTEX | BufferUsage.COPY_DST
+          });
+          for (const i2 in properties) {
+            const property = properties[i2];
+            const attributeInfo = getAttributeInfoFromFormat(property.format);
+            if (property.dynamic) {
+              geometry.addAttribute(property.attributeName, {
+                buffer: this._dynamicBuffer,
+                stride: this._dynamicStride * 4,
+                offset: dynamicOffset * 4,
+                format: property.format
+              });
+              dynamicOffset += attributeInfo.size;
+            } else {
+              geometry.addAttribute(property.attributeName, {
+                buffer: this._staticBuffer,
+                stride: this._staticStride * 4,
+                offset: staticOffset * 4,
+                format: property.format
+              });
+              staticOffset += attributeInfo.size;
+            }
+          }
+          geometry.addIndex(this.indexBuffer);
+          const uploadFunction = this.getParticleUpdate(properties);
+          this._dynamicUpload = uploadFunction.dynamicUpdate;
+          this._staticUpload = uploadFunction.staticUpdate;
+          this.geometry = geometry;
+        }
+        getParticleUpdate(properties) {
+          const key = getParticleSyncKey(properties);
+          if (this._generateParticleUpdateCache[key]) {
+            return this._generateParticleUpdateCache[key];
+          }
+          this._generateParticleUpdateCache[key] = this.generateParticleUpdate(properties);
+          return this._generateParticleUpdateCache[key];
+        }
+        generateParticleUpdate(properties) {
+          return generateParticleUpdateFunction(properties);
+        }
+        update(particles, uploadStatic) {
+          if (particles.length > this._size) {
+            uploadStatic = true;
+            this._size = Math.max(particles.length, this._size * 1.5 | 0);
+            this.staticAttributeBuffer = new ViewableBuffer(this._size * this._staticStride * 4 * 4);
+            this.dynamicAttributeBuffer = new ViewableBuffer(this._size * this._dynamicStride * 4 * 4);
+            this.indexBuffer = createIndicesForQuads(this._size);
+            this.geometry.indexBuffer.setDataWithSize(
+              this.indexBuffer,
+              this.indexBuffer.byteLength,
+              true
+            );
+          }
+          const dynamicAttributeBuffer = this.dynamicAttributeBuffer;
+          this._dynamicUpload(particles, dynamicAttributeBuffer.float32View, dynamicAttributeBuffer.uint32View);
+          this._dynamicBuffer.setDataWithSize(
+            this.dynamicAttributeBuffer.float32View,
+            particles.length * this._dynamicStride * 4,
+            true
+          );
+          if (uploadStatic) {
+            const staticAttributeBuffer = this.staticAttributeBuffer;
+            this._staticUpload(particles, staticAttributeBuffer.float32View, staticAttributeBuffer.uint32View);
+            this._staticBuffer.setDataWithSize(
+              staticAttributeBuffer.float32View,
+              particles.length * this._staticStride * 4,
+              true
+            );
+          }
+        }
+        destroy() {
+          this._staticBuffer.destroy();
+          this._dynamicBuffer.destroy();
+          this.geometry.destroy();
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.frag.mjs
+  var fragment;
+  var init_particles_frag = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.frag.mjs"() {
+      fragment = "varying vec2 vUV;\nvarying vec4 vColor;\n\nuniform sampler2D uTexture;\n\nvoid main(void){\n    vec4 color = texture2D(uTexture, vUV) * vColor;\n    gl_FragColor = color;\n}";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.vert.mjs
+  var vertex;
+  var init_particles_vert = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.vert.mjs"() {
+      vertex = "attribute vec2 aVertex;\nattribute vec2 aUV;\nattribute vec4 aColor;\n\nattribute vec2 aPosition;\nattribute float aRotation;\n\nuniform mat3 uTranslationMatrix;\nuniform float uRound;\nuniform vec2 uResolution;\nuniform vec4 uColor;\n\nvarying vec2 vUV;\nvarying vec4 vColor;\n\nvec2 roundPixels(vec2 position, vec2 targetSize)\n{       \n    return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;\n}\n\nvoid main(void){\n    float cosRotation = cos(aRotation);\n    float sinRotation = sin(aRotation);\n    float x = aVertex.x * cosRotation - aVertex.y * sinRotation;\n    float y = aVertex.x * sinRotation + aVertex.y * cosRotation;\n\n    vec2 v = vec2(x, y);\n    v = v + aPosition;\n\n    gl_Position = vec4((uTranslationMatrix * vec3(v, 1.0)).xy, 0.0, 1.0);\n\n    if(uRound == 1.0)\n    {\n        gl_Position.xy = roundPixels(gl_Position.xy, uResolution);\n    }\n\n    vUV = aUV;\n    vColor = aColor * uColor;\n}\n";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.wgsl.mjs
+  var wgsl;
+  var init_particles_wgsl = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/particles.wgsl.mjs"() {
+      wgsl = "\nstruct ParticleUniforms {\n  uProjectionMatrix:mat3x3<f32>,\n  uResolution:vec2<f32>,\n  uRoundPixels:f32,\n};\n\n@group(0) @binding(0) var<uniform> uniforms: ParticleUniforms;\n\n@group(1) @binding(0) var uTexture: texture_2d<f32>;\n@group(1) @binding(1) var uSampler : sampler;\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) uv : vec2<f32>,\n    @location(1) color : vec4<f32>,\n  };\n@vertex\nfn mainVertex(\n  @location(0) aVertex: vec2<f32>,\n  @location(1) aPosition: vec2<f32>,\n  @location(2) aUV: vec2<f32>,\n  @location(3) aColor: vec4<f32>,\n  @location(4) aRotation: f32,\n) -> VSOutput {\n  \n   let v = vec2(\n       aVertex.x * cos(aRotation) - aVertex.y * sin(aRotation),\n       aVertex.x * sin(aRotation) + aVertex.y * cos(aRotation)\n   ) + aPosition;\n\n   let position = vec4((uniforms.uProjectionMatrix * vec3(v, 1.0)).xy, 0.0, 1.0);\n\n  return VSOutput(\n   position,\n   aUV,\n   aColor,\n  );\n}\n\n@fragment\nfn mainFragment(\n  @location(0) uv: vec2<f32>,\n  @location(1) color: vec4<f32>,\n  @builtin(position) position: vec4<f32>,\n) -> @location(0) vec4<f32> {\n\n    var sample = textureSample(uTexture, uSampler, uv) * color;\n   \n    return sample;\n}";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/ParticleShader.mjs
+  var ParticleShader;
+  var init_ParticleShader = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/shader/ParticleShader.mjs"() {
+      init_Color();
+      init_Matrix();
+      init_GlProgram();
+      init_GpuProgram();
+      init_Shader();
+      init_Texture();
+      init_TextureStyle();
+      init_particles_frag();
+      init_particles_vert();
+      init_particles_wgsl();
+      ParticleShader = class extends Shader {
+        constructor() {
+          const glProgram3 = GlProgram.from({
+            vertex,
+            fragment
+          });
+          const gpuProgram3 = GpuProgram.from({
+            fragment: {
+              source: wgsl,
+              entryPoint: "mainFragment"
+            },
+            vertex: {
+              source: wgsl,
+              entryPoint: "mainVertex"
+            }
+          });
+          super({
+            glProgram: glProgram3,
+            gpuProgram: gpuProgram3,
+            resources: {
+              // this will be replaced with the texture from the particle container
+              uTexture: Texture.WHITE.source,
+              // this will be replaced with the texture style from the particle container
+              uSampler: new TextureStyle({}),
+              // this will be replaced with the local uniforms from the particle container
+              uniforms: {
+                uTranslationMatrix: { value: new Matrix(), type: "mat3x3<f32>" },
+                uColor: { value: new Color(16777215), type: "vec4<f32>" },
+                uRound: { value: 1, type: "f32" },
+                uResolution: { value: [0, 0], type: "vec2<f32>" }
+              }
+            }
+          });
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/ParticleContainerPipe.mjs
+  var ParticleContainerPipe;
+  var init_ParticleContainerPipe = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/ParticleContainerPipe.mjs"() {
+      init_Matrix();
+      init_UniformGroup();
+      init_getAdjustedBlendModeBlend();
+      init_State();
+      init_colorToUniform();
+      init_ParticleBuffer();
+      init_ParticleShader();
+      ParticleContainerPipe = class {
+        /**
+         * @param renderer - The renderer this sprite batch works for.
+         * @param adaptor
+         */
+        constructor(renderer, adaptor) {
+          this.state = State.for2d();
+          this._gpuBufferHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
+          this.localUniforms = new UniformGroup({
+            uTranslationMatrix: { value: new Matrix(), type: "mat3x3<f32>" },
+            uColor: { value: new Float32Array(4), type: "vec4<f32>" },
+            uRound: { value: 1, type: "f32" },
+            uResolution: { value: [0, 0], type: "vec2<f32>" }
+          });
+          this.renderer = renderer;
+          this.adaptor = adaptor;
+          this.defaultShader = new ParticleShader();
+          this.state = State.for2d();
+        }
+        validateRenderable(_renderable) {
+          return false;
+        }
+        addRenderable(renderable, instructionSet) {
+          this.renderer.renderPipes.batch.break(instructionSet);
+          instructionSet.add(renderable);
+        }
+        getBuffers(renderable) {
+          return this._gpuBufferHash[renderable.uid] || this._initBuffer(renderable);
+        }
+        _initBuffer(renderable) {
+          this._gpuBufferHash[renderable.uid] = new ParticleBuffer({
+            size: renderable.particleChildren.length,
+            properties: renderable._properties
+          });
+          renderable.on("destroyed", this._destroyRenderableBound);
+          return this._gpuBufferHash[renderable.uid];
+        }
+        updateRenderable(_renderable) {
+        }
+        destroyRenderable(renderable) {
+          const buffer = this._gpuBufferHash[renderable.uid];
+          buffer.destroy();
+          this._gpuBufferHash[renderable.uid] = null;
+          renderable.off("destroyed", this._destroyRenderableBound);
+        }
+        execute(container) {
+          const children2 = container.particleChildren;
+          if (children2.length === 0) {
+            return;
+          }
+          const renderer = this.renderer;
+          const buffer = this.getBuffers(container);
+          container.texture || (container.texture = children2[0].texture);
+          const state = this.state;
+          buffer.update(children2, container._childrenDirty);
+          container._childrenDirty = false;
+          state.blendMode = getAdjustedBlendModeBlend(container.blendMode, container.texture._source);
+          const uniforms = this.localUniforms.uniforms;
+          const transformationMatrix = uniforms.uTranslationMatrix;
+          container.worldTransform.copyTo(transformationMatrix);
+          transformationMatrix.prepend(renderer.globalUniforms.globalUniformData.projectionMatrix);
+          uniforms.uResolution = renderer.globalUniforms.globalUniformData.resolution;
+          uniforms.uRound = renderer._roundPixels | container._roundPixels;
+          color32BitToUniform(
+            container.groupColorAlpha,
+            uniforms.uColor,
+            0
+          );
+          this.adaptor.execute(this, container);
+        }
+        /** Destroys the ParticleRenderer. */
+        destroy() {
+          if (this.defaultShader) {
+            this.defaultShader.destroy();
+            this.defaultShader = null;
+          }
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/GlParticleContainerPipe.mjs
+  var GlParticleContainerPipe;
+  var init_GlParticleContainerPipe = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/GlParticleContainerPipe.mjs"() {
+      init_Extensions();
+      init_GlParticleContainerAdaptor();
+      init_ParticleContainerPipe();
+      GlParticleContainerPipe = class extends ParticleContainerPipe {
+        constructor(renderer) {
+          super(renderer, new GlParticleContainerAdaptor());
+        }
+      };
+      GlParticleContainerPipe.extension = {
+        type: [
+          ExtensionType.WebGLPipes
+        ],
+        name: "particle"
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/gpu/GpuParticleContainerAdaptor.mjs
+  var GpuParticleContainerAdaptor;
+  var init_GpuParticleContainerAdaptor = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/gpu/GpuParticleContainerAdaptor.mjs"() {
+      "use strict";
+      GpuParticleContainerAdaptor = class {
+        execute(particleContainerPop, container) {
+          const renderer = particleContainerPop.renderer;
+          const shader = container.shader || particleContainerPop.defaultShader;
+          shader.groups[0] = renderer.renderPipes.uniformBatch.getUniformBindGroup(particleContainerPop.localUniforms, true);
+          shader.groups[1] = renderer.texture.getTextureBindGroup(container.texture);
+          const state = particleContainerPop.state;
+          const buffer = particleContainerPop.getBuffers(container);
+          renderer.encoder.draw({
+            geometry: buffer.geometry,
+            shader: container.shader || particleContainerPop.defaultShader,
+            state,
+            size: container.particleChildren.length * 6
+          });
+        }
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/shared/GpuParticleContainerPipe.mjs
+  var GpuParticleContainerPipe;
+  var init_GpuParticleContainerPipe = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/shared/GpuParticleContainerPipe.mjs"() {
+      init_Extensions();
+      init_GpuParticleContainerAdaptor();
+      init_ParticleContainerPipe();
+      GpuParticleContainerPipe = class extends ParticleContainerPipe {
+        constructor(renderer) {
+          super(renderer, new GpuParticleContainerAdaptor());
+        }
+      };
+      GpuParticleContainerPipe.extension = {
+        type: [
+          ExtensionType.WebGPUPipes
+        ],
+        name: "particle"
+      };
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/particle-container/init.mjs
+  var init_init8 = __esm({
+    "../core/node_modules/pixi.js/lib/scene/particle-container/init.mjs"() {
+      init_Extensions();
+      init_GlParticleContainerPipe();
+      init_GpuParticleContainerPipe();
+      extensions.add(GlParticleContainerPipe);
+      extensions.add(GpuParticleContainerPipe);
+    }
+  });
+
   // ../core/node_modules/pixi.js/lib/scene/sprite/BatchableSprite.mjs
   var BatchableSprite;
   var init_BatchableSprite = __esm({
@@ -14580,72 +16922,26 @@ Deprecated since v${version}`);
       "use strict";
       BatchableSprite = class {
         constructor() {
-          this.vertexSize = 4;
+          this.batcherName = "default";
+          this.attributeSize = 4;
           this.indexSize = 6;
-          this.location = 0;
-          this.batcher = null;
-          this.batch = null;
+          this.packAsQuad = true;
           this.roundPixels = 0;
+          this._attributeStart = 0;
+          this._batcher = null;
+          this._batch = null;
         }
         get blendMode() {
           return this.renderable.groupBlendMode;
         }
-        packAttributes(float32View, uint32View, index, textureId) {
-          const sprite = this.renderable;
-          const texture = this.texture;
-          const wt = sprite.groupTransform;
-          const a2 = wt.a;
-          const b2 = wt.b;
-          const c2 = wt.c;
-          const d2 = wt.d;
-          const tx = wt.tx;
-          const ty = wt.ty;
-          const bounds = this.bounds;
-          const w0 = bounds.maxX;
-          const w1 = bounds.minX;
-          const h0 = bounds.maxY;
-          const h1 = bounds.minY;
-          const uvs = texture.uvs;
-          const argb = sprite.groupColorAlpha;
-          const textureIdAndRound = textureId << 16 | this.roundPixels & 65535;
-          float32View[index + 0] = a2 * w1 + c2 * h1 + tx;
-          float32View[index + 1] = d2 * h1 + b2 * w1 + ty;
-          float32View[index + 2] = uvs.x0;
-          float32View[index + 3] = uvs.y0;
-          uint32View[index + 4] = argb;
-          uint32View[index + 5] = textureIdAndRound;
-          float32View[index + 6] = a2 * w0 + c2 * h1 + tx;
-          float32View[index + 7] = d2 * h1 + b2 * w0 + ty;
-          float32View[index + 8] = uvs.x1;
-          float32View[index + 9] = uvs.y1;
-          uint32View[index + 10] = argb;
-          uint32View[index + 11] = textureIdAndRound;
-          float32View[index + 12] = a2 * w0 + c2 * h0 + tx;
-          float32View[index + 13] = d2 * h0 + b2 * w0 + ty;
-          float32View[index + 14] = uvs.x2;
-          float32View[index + 15] = uvs.y2;
-          uint32View[index + 16] = argb;
-          uint32View[index + 17] = textureIdAndRound;
-          float32View[index + 18] = a2 * w1 + c2 * h0 + tx;
-          float32View[index + 19] = d2 * h0 + b2 * w1 + ty;
-          float32View[index + 20] = uvs.x3;
-          float32View[index + 21] = uvs.y3;
-          uint32View[index + 22] = argb;
-          uint32View[index + 23] = textureIdAndRound;
-        }
-        packIndex(indexBuffer, index, indicesOffset) {
-          indexBuffer[index] = indicesOffset + 0;
-          indexBuffer[index + 1] = indicesOffset + 1;
-          indexBuffer[index + 2] = indicesOffset + 2;
-          indexBuffer[index + 3] = indicesOffset + 0;
-          indexBuffer[index + 4] = indicesOffset + 2;
-          indexBuffer[index + 5] = indicesOffset + 3;
+        get color() {
+          return this.renderable.groupColorAlpha;
         }
         reset() {
           this.renderable = null;
           this.texture = null;
-          this.batcher = null;
-          this.batch = null;
+          this._batcher = null;
+          this._batch = null;
           this.bounds = null;
         }
       };
@@ -14663,35 +16959,38 @@ Deprecated since v${version}`);
       CanvasTextPipe = class {
         constructor(renderer) {
           this._gpuText = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.runners.resolutionChange.add(this);
+          this._renderer.renderableGC.addManagedHash(this, "_gpuText");
+        }
+        resolutionChange() {
+          for (const i2 in this._gpuText) {
+            const gpuText = this._gpuText[i2];
+            if (!gpuText)
+              continue;
+            const text2 = gpuText.batchableSprite.renderable;
+            if (text2._autoResolution) {
+              text2._resolution = this._renderer.resolution;
+              text2.onViewUpdate();
+            }
+          }
         }
         validateRenderable(text2) {
           const gpuText = this._getGpuText(text2);
           const newKey = text2._getKey();
           if (gpuText.currentKey !== newKey) {
-            const resolution = text2.resolution ?? this._renderer.resolution;
-            const { width, height } = this._renderer.canvasText.getTextureSize(
-              text2.text,
-              resolution,
-              text2._style
-            );
-            if (
-              // is only being used by this text:
-              this._renderer.canvasText.getReferenceCount(gpuText.currentKey) === 1 && width === gpuText.texture._source.width && height === gpuText.texture._source.height
-            ) {
-              return false;
-            }
             return true;
           }
           return false;
         }
-        addRenderable(text2, _instructionSet) {
+        addRenderable(text2, instructionSet) {
           const gpuText = this._getGpuText(text2);
           const batchableSprite = gpuText.batchableSprite;
           if (text2._didTextUpdate) {
             this._updateText(text2);
           }
-          this._renderer.renderPipes.batch.addToBatch(batchableSprite);
+          this._renderer.renderPipes.batch.addToBatch(batchableSprite, instructionSet);
         }
         updateRenderable(text2) {
           const gpuText = this._getGpuText(text2);
@@ -14699,9 +16998,10 @@ Deprecated since v${version}`);
           if (text2._didTextUpdate) {
             this._updateText(text2);
           }
-          batchableSprite.batcher.updateElement(batchableSprite);
+          batchableSprite._batcher.updateElement(batchableSprite);
         }
         destroyRenderable(text2) {
+          text2.off("destroyed", this._destroyRenderableBound);
           this._destroyRenderableById(text2.uid);
         }
         _destroyRenderableById(textUid) {
@@ -14741,13 +17041,13 @@ Deprecated since v${version}`);
             batchableSprite: BigPool.get(BatchableSprite)
           };
           gpuTextData.batchableSprite.renderable = text2;
+          gpuTextData.batchableSprite.transform = text2.groupTransform;
           gpuTextData.batchableSprite.bounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
           gpuTextData.batchableSprite.roundPixels = this._renderer._roundPixels | text2._roundPixels;
           this._gpuText[text2.uid] = gpuTextData;
+          text2._resolution = text2._autoResolution ? this._renderer.resolution : text2.resolution;
           this._updateText(text2);
-          text2.on("destroyed", () => {
-            this.destroyRenderable(text2);
-          });
+          text2.on("destroyed", this._destroyRenderableBound);
           return gpuTextData;
         }
         destroy() {
@@ -14820,8 +17120,10 @@ Deprecated since v${version}`);
          * @param canvasAndContext
          */
         returnCanvasAndContext(canvasAndContext) {
-          const { width, height } = canvasAndContext.canvas;
+          const canvas = canvasAndContext.canvas;
+          const { width, height } = canvas;
           const key = (width << 17) + (height << 1);
+          canvasAndContext.context.clearRect(0, 0, width, height);
           this._canvasPool[key].push(canvasAndContext);
         }
         clear() {
@@ -15018,7 +17320,7 @@ Deprecated since v${version}`);
           this.y1 = y1;
         }
         addColorStop(offset, color3) {
-          this.gradientStops.push({ offset, color: Color.shared.setValue(color3).toHex() });
+          this.gradientStops.push({ offset, color: Color.shared.setValue(color3).toHexa() });
           this._styleKey = null;
           return this;
         }
@@ -15520,10 +17822,16 @@ Deprecated since v${version}`);
         }
         /**
          * Returns the framing rectangle of the ellipse as a Rectangle object
+         * @param out
          * @returns The framing rectangle
          */
-        getBounds() {
-          return new Rectangle(this.x - this.halfWidth, this.y - this.halfHeight, this.halfWidth * 2, this.halfHeight * 2);
+        getBounds(out2) {
+          out2 = out2 || new Rectangle();
+          out2.x = this.x - this.halfWidth;
+          out2.y = this.y - this.halfHeight;
+          out2.width = this.halfWidth * 2;
+          out2.height = this.halfHeight * 2;
+          return out2;
         }
         /**
          * Copies another ellipse to this one.
@@ -16931,7 +19239,7 @@ Deprecated since v${version}`);
             if (lastShape) {
               let lx = lastShape.shape.x;
               let ly = lastShape.shape.y;
-              if (!lastShape.transform.isIdentity()) {
+              if (lastShape.transform && !lastShape.transform.isIdentity()) {
                 const t2 = lastShape.transform;
                 const tempX = lx;
                 lx = t2.a * lx + t2.c * ly + t2.tx;
@@ -17664,12 +19972,14 @@ Deprecated since v${version}`);
     if (style.texture) {
       if (style.texture !== Texture.WHITE) {
         const m2 = style.matrix?.invert() || new Matrix();
-        m2.scale(1 / style.texture.frame.width, 1 / style.texture.frame.height);
+        m2.translate(style.texture.frame.x, style.texture.frame.y);
+        m2.scale(1 / style.texture.source.width, 1 / style.texture.source.height);
         style.matrix = m2;
       }
       const sourceStyle = style.texture.source.style;
       if (sourceStyle.addressMode === "clamp-to-edge") {
         sourceStyle.addressMode = "repeat";
+        sourceStyle.update();
       }
     }
     const color3 = Color.shared.setValue(style.color);
@@ -18579,9 +20889,6 @@ Deprecated since v${version}`);
         "align",
         "breakWords",
         "cssOverrides",
-        "fontFamily",
-        "fontSize",
-        "fontStyle",
         "fontVariant",
         "fontWeight",
         "leading",
@@ -18592,7 +20899,10 @@ Deprecated since v${version}`);
         "trim",
         "whiteSpace",
         "wordWrap",
-        "wordWrapWidth"
+        "wordWrapWidth",
+        "fontFamily",
+        "fontStyle",
+        "fontSize"
       ];
     }
   });
@@ -18730,7 +21040,7 @@ Deprecated since v${version}`);
           return this._fontStyle;
         }
         set fontStyle(value) {
-          this._fontStyle = value;
+          this._fontStyle = value.toLowerCase();
           this.update();
         }
         /**
@@ -19204,8 +21514,8 @@ Deprecated since v${version}`);
           if (style.dropShadow) {
             width += style.dropShadow.distance;
           }
-          const lineHeight = style.lineHeight || fontProperties.fontSize + strokeWidth;
-          let height = Math.max(lineHeight, fontProperties.fontSize + strokeWidth * 2) + (lines.length - 1) * (lineHeight + style.leading);
+          const lineHeight = style.lineHeight || fontProperties.fontSize;
+          let height = Math.max(lineHeight, fontProperties.fontSize + strokeWidth) + (lines.length - 1) * (lineHeight + style.leading);
           if (style.dropShadow) {
             height += style.dropShadow.distance;
           }
@@ -19234,15 +21544,22 @@ Deprecated since v${version}`);
               context4.textLetterSpacing = "0px";
             }
           }
-          let width = context4.measureText(text2).width;
-          if (width > 0) {
+          const metrics = context4.measureText(text2);
+          let metricWidth = metrics.width;
+          const actualBoundingBoxLeft = -metrics.actualBoundingBoxLeft;
+          const actualBoundingBoxRight = metrics.actualBoundingBoxRight;
+          let boundsWidth = actualBoundingBoxRight - actualBoundingBoxLeft;
+          if (metricWidth > 0) {
             if (useExperimentalLetterSpacing) {
-              width -= letterSpacing;
+              metricWidth -= letterSpacing;
+              boundsWidth -= letterSpacing;
             } else {
-              width += (_CanvasTextMetrics2.graphemeSegmenter(text2).length - 1) * letterSpacing;
+              const val = (_CanvasTextMetrics2.graphemeSegmenter(text2).length - 1) * letterSpacing;
+              metricWidth += val;
+              boundsWidth += val;
             }
           }
-          return width;
+          return Math.max(metricWidth, boundsWidth);
         }
         /**
          * Applies newlines to a string to have it optimally fit into the horizontal
@@ -19346,7 +21663,7 @@ Deprecated since v${version}`);
           return lines;
         }
         /**
-         * Convienience function for logging each line added during the wordWrap method.
+         * Convenience function for logging each line added during the wordWrap method.
          * @param line    - The line of text to add
          * @param newLine - Add new line character to end
          * @returns A formatted line
@@ -19629,7 +21946,7 @@ Deprecated since v${version}`);
   // ../core/node_modules/pixi.js/lib/scene/text/canvas/utils/getCanvasFillStyle.mjs
   function getCanvasFillStyle(fillStyle, context4) {
     if (fillStyle.texture === Texture.WHITE && !fillStyle.fill) {
-      return Color.shared.setValue(fillStyle.color).toHex();
+      return Color.shared.setValue(fillStyle.color).setAlpha(fillStyle.alpha ?? 1).toHexa();
     } else if (!fillStyle.fill) {
       const pattern = context4.createPattern(fillStyle.texture.source.resource, "repeat");
       const tempMatrix6 = fillStyle.matrix.copyTo(Matrix.shared);
@@ -19743,6 +22060,7 @@ Deprecated since v${version}`);
           return { texture, canvasAndContext };
         }
         getManagedTexture(text2) {
+          text2._resolution = text2._autoResolution ? this._renderer.resolution : text2.resolution;
           const textKey = text2._getKey();
           if (this._activeTextures[textKey]) {
             this._increaseReferenceCount(textKey);
@@ -19798,8 +22116,7 @@ Deprecated since v${version}`);
           const height = canvas.height;
           context4.resetTransform();
           context4.scale(resolution, resolution);
-          const padding = style.padding * 2;
-          context4.clearRect(0, 0, measured.width + 4 + padding, measured.height + 4 + padding);
+          context4.textBaseline = style.textBaseline;
           if (style._stroke?.width) {
             const strokeStyle = style._stroke;
             context4.lineWidth = strokeStyle.width;
@@ -19828,7 +22145,6 @@ Deprecated since v${version}`);
               context4.shadowOffsetX = Math.cos(shadowOptions.angle) * dropShadowDistance;
               context4.shadowOffsetY = Math.sin(shadowOptions.angle) * dropShadowDistance + dsOffsetShadow;
             } else {
-              context4.globalAlpha = style._fill?.alpha ?? 1;
               context4.fillStyle = style._fill ? getCanvasFillStyle(style._fill, context4) : null;
               if (style._stroke?.width) {
                 context4.strokeStyle = getCanvasFillStyle(style._stroke, context4);
@@ -19938,7 +22254,7 @@ Deprecated since v${version}`);
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text/init.mjs
-  var init_init8 = __esm({
+  var init_init9 = __esm({
     "../core/node_modules/pixi.js/lib/scene/text/init.mjs"() {
       init_Extensions();
       init_CanvasTextPipe();
@@ -19953,9 +22269,9 @@ Deprecated since v${version}`);
   var init_Graphics = __esm({
     "../core/node_modules/pixi.js/lib/scene/graphics/shared/Graphics.mjs"() {
       init_deprecation();
-      init_Container();
+      init_ViewContainer();
       init_GraphicsContext();
-      Graphics = class extends Container {
+      Graphics = class extends ViewContainer {
         /**
          * @param options - Options for the Graphics.
          */
@@ -19968,9 +22284,7 @@ Deprecated since v${version}`);
             label: "Graphics",
             ...rest
           });
-          this.canBundle = true;
           this.renderPipeId = "graphics";
-          this._roundPixels = 0;
           if (!context4) {
             this._context = this._ownedContext = new GraphicsContext();
           } else {
@@ -20011,27 +22325,6 @@ Deprecated since v${version}`);
          */
         containsPoint(point) {
           return this._context.containsPoint(point);
-        }
-        /**
-         *  Whether or not to round the x/y position of the graphic.
-         * @type {boolean}
-         */
-        get roundPixels() {
-          return !!this._roundPixels;
-        }
-        set roundPixels(value) {
-          this._roundPixels = value ? 1 : 0;
-        }
-        onViewUpdate() {
-          this._didChangeId += 1 << 12;
-          this._didGraphicsUpdate = true;
-          if (this.didViewUpdate)
-            return;
-          this.didViewUpdate = true;
-          const renderGroup = this.renderGroup || this.parentRenderGroup;
-          if (renderGroup) {
-            renderGroup.onChildViewUpdate(this);
-          }
         }
         /**
          * Destroys this graphics renderable and optionally its context.
@@ -20357,1400 +22650,6 @@ Deprecated since v${version}`);
     }
   });
 
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/getMaxFragmentPrecision.mjs
-  function getMaxFragmentPrecision() {
-    if (!maxFragmentPrecision) {
-      maxFragmentPrecision = "mediump";
-      const gl = getTestContext();
-      if (gl) {
-        if (gl.getShaderPrecisionFormat) {
-          const shaderFragment = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
-          maxFragmentPrecision = shaderFragment.precision ? "highp" : "mediump";
-        }
-      }
-    }
-    return maxFragmentPrecision;
-  }
-  var maxFragmentPrecision;
-  var init_getMaxFragmentPrecision = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/getMaxFragmentPrecision.mjs"() {
-      init_getTestContext();
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/addProgramDefines.mjs
-  function addProgramDefines(src, isES300, isFragment) {
-    if (isES300)
-      return src;
-    if (isFragment) {
-      src = src.replace("out vec4 finalColor;", "");
-      return `
-        
-        #ifdef GL_ES // This checks if it is WebGL1
-        #define in varying
-        #define finalColor gl_FragColor
-        #define texture texture2D
-        #endif
-        ${src}
-        `;
-    }
-    return `
-        
-        #ifdef GL_ES // This checks if it is WebGL1
-        #define in attribute
-        #define out varying
-        #endif
-        ${src}
-        `;
-  }
-  var init_addProgramDefines = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/addProgramDefines.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/ensurePrecision.mjs
-  function ensurePrecision(src, options, isFragment) {
-    const maxSupportedPrecision = isFragment ? options.maxSupportedFragmentPrecision : options.maxSupportedVertexPrecision;
-    if (src.substring(0, 9) !== "precision") {
-      let precision = isFragment ? options.requestedFragmentPrecision : options.requestedVertexPrecision;
-      if (precision === "highp" && maxSupportedPrecision !== "highp") {
-        precision = "mediump";
-      }
-      return `precision ${precision} float;
-${src}`;
-    } else if (maxSupportedPrecision !== "highp" && src.substring(0, 15) === "precision highp") {
-      return src.replace("precision highp", "precision mediump");
-    }
-    return src;
-  }
-  var init_ensurePrecision = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/ensurePrecision.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/insertVersion.mjs
-  function insertVersion(src, isES300) {
-    if (!isES300)
-      return src;
-    return `#version 300 es
-${src}`;
-  }
-  var init_insertVersion = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/insertVersion.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/setProgramName.mjs
-  function setProgramName(src, { name = `pixi-program` }, isFragment = true) {
-    name = name.replace(/\s+/g, "-");
-    name += isFragment ? "-fragment" : "-vertex";
-    const nameCache = isFragment ? fragmentNameCache : VertexNameCache;
-    if (nameCache[name]) {
-      nameCache[name]++;
-      name += `-${nameCache[name]}`;
-    } else {
-      nameCache[name] = 1;
-    }
-    if (src.indexOf("#define SHADER_NAME") !== -1)
-      return src;
-    const shaderName = `#define SHADER_NAME ${name}`;
-    return `${shaderName}
-${src}`;
-  }
-  var fragmentNameCache, VertexNameCache;
-  var init_setProgramName = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/setProgramName.mjs"() {
-      "use strict";
-      fragmentNameCache = {};
-      VertexNameCache = {};
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/stripVersion.mjs
-  function stripVersion(src, isES300) {
-    if (!isES300)
-      return src;
-    return src.replace("#version 300 es", "");
-  }
-  var init_stripVersion = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/program/preprocessors/stripVersion.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/GlProgram.mjs
-  var processes, programCache, _GlProgram, GlProgram;
-  var init_GlProgram = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/GlProgram.mjs"() {
-      init_createIdFromString();
-      init_getMaxFragmentPrecision();
-      init_addProgramDefines();
-      init_ensurePrecision();
-      init_insertVersion();
-      init_setProgramName();
-      init_stripVersion();
-      processes = {
-        // strips any version headers..
-        stripVersion,
-        // adds precision string if not already present
-        ensurePrecision,
-        // add some defines if WebGL1 to make it more compatible with WebGL2 shaders
-        addProgramDefines,
-        // add the program name to the shader
-        setProgramName,
-        // add the version string to the shader header
-        insertVersion
-      };
-      programCache = /* @__PURE__ */ Object.create(null);
-      _GlProgram = class _GlProgram2 {
-        /**
-         * Creates a shiny new GlProgram. Used by WebGL renderer.
-         * @param options - The options for the program.
-         */
-        constructor(options) {
-          options = { ..._GlProgram2.defaultOptions, ...options };
-          const isES300 = options.fragment.indexOf("#version 300 es") !== -1;
-          const preprocessorOptions = {
-            stripVersion: isES300,
-            ensurePrecision: {
-              requestedFragmentPrecision: options.preferredFragmentPrecision,
-              requestedVertexPrecision: options.preferredVertexPrecision,
-              maxSupportedVertexPrecision: "highp",
-              maxSupportedFragmentPrecision: getMaxFragmentPrecision()
-            },
-            setProgramName: {
-              name: options.name
-            },
-            addProgramDefines: isES300,
-            insertVersion: isES300
-          };
-          let fragment2 = options.fragment;
-          let vertex2 = options.vertex;
-          Object.keys(processes).forEach((processKey) => {
-            const processOptions = preprocessorOptions[processKey];
-            fragment2 = processes[processKey](fragment2, processOptions, true);
-            vertex2 = processes[processKey](vertex2, processOptions, false);
-          });
-          this.fragment = fragment2;
-          this.vertex = vertex2;
-          this._key = createIdFromString(`${this.vertex}:${this.fragment}`, "gl-program");
-        }
-        /** destroys the program */
-        destroy() {
-          this.fragment = null;
-          this.vertex = null;
-          this._attributeData = null;
-          this._uniformData = null;
-          this._uniformBlockData = null;
-          this.transformFeedbackVaryings = null;
-        }
-        /**
-         * Helper function that creates a program for a given source.
-         * It will check the program cache if the program has already been created.
-         * If it has that one will be returned, if not a new one will be created and cached.
-         * @param options - The options for the program.
-         * @returns A program using the same source
-         */
-        static from(options) {
-          const key = `${options.vertex}:${options.fragment}`;
-          if (!programCache[key]) {
-            programCache[key] = new _GlProgram2(options);
-          }
-          return programCache[key];
-        }
-      };
-      _GlProgram.defaultOptions = {
-        preferredVertexPrecision: "highp",
-        preferredFragmentPrecision: "mediump"
-      };
-      GlProgram = _GlProgram;
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getAttributeInfoFromFormat.mjs
-  function getAttributeInfoFromFormat(format) {
-    return attributeFormatData[format] ?? attributeFormatData.float32;
-  }
-  var attributeFormatData;
-  var init_getAttributeInfoFromFormat = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/geometry/utils/getAttributeInfoFromFormat.mjs"() {
-      "use strict";
-      attributeFormatData = {
-        uint8x2: { size: 2, stride: 2, normalised: false },
-        uint8x4: { size: 4, stride: 4, normalised: false },
-        sint8x2: { size: 2, stride: 2, normalised: false },
-        sint8x4: { size: 4, stride: 4, normalised: false },
-        unorm8x2: { size: 2, stride: 2, normalised: true },
-        unorm8x4: { size: 4, stride: 4, normalised: true },
-        snorm8x2: { size: 2, stride: 2, normalised: true },
-        snorm8x4: { size: 4, stride: 4, normalised: true },
-        uint16x2: { size: 2, stride: 4, normalised: false },
-        uint16x4: { size: 4, stride: 8, normalised: false },
-        sint16x2: { size: 2, stride: 4, normalised: false },
-        sint16x4: { size: 4, stride: 8, normalised: false },
-        unorm16x2: { size: 2, stride: 4, normalised: true },
-        unorm16x4: { size: 4, stride: 8, normalised: true },
-        snorm16x2: { size: 2, stride: 4, normalised: true },
-        snorm16x4: { size: 4, stride: 8, normalised: true },
-        float16x2: { size: 2, stride: 4, normalised: false },
-        float16x4: { size: 4, stride: 8, normalised: false },
-        float32: { size: 1, stride: 4, normalised: false },
-        float32x2: { size: 2, stride: 8, normalised: false },
-        float32x3: { size: 3, stride: 12, normalised: false },
-        float32x4: { size: 4, stride: 16, normalised: false },
-        uint32: { size: 1, stride: 4, normalised: false },
-        uint32x2: { size: 2, stride: 8, normalised: false },
-        uint32x3: { size: 3, stride: 12, normalised: false },
-        uint32x4: { size: 4, stride: 16, normalised: false },
-        sint32: { size: 1, stride: 4, normalised: false },
-        sint32x2: { size: 2, stride: 8, normalised: false },
-        sint32x3: { size: 3, stride: 12, normalised: false },
-        sint32x4: { size: 4, stride: 16, normalised: false }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractAttributesFromGpuProgram.mjs
-  function extractAttributesFromGpuProgram({ source: source2, entryPoint }) {
-    const results = {};
-    const mainVertStart = source2.indexOf(`fn ${entryPoint}`);
-    if (mainVertStart !== -1) {
-      const arrowFunctionStart = source2.indexOf("->", mainVertStart);
-      if (arrowFunctionStart !== -1) {
-        const functionArgsSubstring = source2.substring(mainVertStart, arrowFunctionStart);
-        const inputsRegex = /@location\((\d+)\)\s+([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_<>]+)(?:,|\s|$)/g;
-        let match;
-        while ((match = inputsRegex.exec(functionArgsSubstring)) !== null) {
-          const format = WGSL_TO_VERTEX_TYPES[match[3]] ?? "float32";
-          results[match[2]] = {
-            location: parseInt(match[1], 10),
-            format,
-            stride: getAttributeInfoFromFormat(format).stride,
-            offset: 0,
-            instance: false,
-            start: 0
-          };
-        }
-      }
-    }
-    return results;
-  }
-  var WGSL_TO_VERTEX_TYPES;
-  var init_extractAttributesFromGpuProgram = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractAttributesFromGpuProgram.mjs"() {
-      init_getAttributeInfoFromFormat();
-      WGSL_TO_VERTEX_TYPES = {
-        f32: "float32",
-        "vec2<f32>": "float32x2",
-        "vec3<f32>": "float32x3",
-        "vec4<f32>": "float32x4",
-        vec2f: "float32x2",
-        vec3f: "float32x3",
-        vec4f: "float32x4",
-        i32: "sint32",
-        "vec2<i32>": "sint32x2",
-        "vec3<i32>": "sint32x3",
-        "vec4<i32>": "sint32x4",
-        u32: "uint32",
-        "vec2<u32>": "uint32x2",
-        "vec3<u32>": "uint32x3",
-        "vec4<u32>": "uint32x4",
-        bool: "uint32",
-        "vec2<bool>": "uint32x2",
-        "vec3<bool>": "uint32x3",
-        "vec4<bool>": "uint32x4"
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractStructAndGroups.mjs
-  function extractStructAndGroups(wgsl) {
-    const linePattern = /(^|[^/])@(group|binding)\(\d+\)[^;]+;/g;
-    const groupPattern = /@group\((\d+)\)/;
-    const bindingPattern = /@binding\((\d+)\)/;
-    const namePattern = /var(<[^>]+>)? (\w+)/;
-    const typePattern = /:\s*(\w+)/;
-    const structPattern = /struct\s+(\w+)\s*{([^}]+)}/g;
-    const structMemberPattern = /(\w+)\s*:\s*([\w\<\>]+)/g;
-    const structName = /struct\s+(\w+)/;
-    const groups = wgsl.match(linePattern)?.map((item) => ({
-      group: parseInt(item.match(groupPattern)[1], 10),
-      binding: parseInt(item.match(bindingPattern)[1], 10),
-      name: item.match(namePattern)[2],
-      isUniform: item.match(namePattern)[1] === "<uniform>",
-      type: item.match(typePattern)[1]
-    }));
-    if (!groups) {
-      return {
-        groups: [],
-        structs: []
-      };
-    }
-    const structs = wgsl.match(structPattern)?.map((struct) => {
-      const name = struct.match(structName)[1];
-      const members = struct.match(structMemberPattern).reduce((acc, member) => {
-        const [name2, type] = member.split(":");
-        acc[name2.trim()] = type.trim();
-        return acc;
-      }, {});
-      if (!members) {
-        return null;
-      }
-      return { name, members };
-    }).filter(({ name }) => groups.some((group) => group.type === name)) ?? [];
-    return {
-      groups,
-      structs
-    };
-  }
-  var init_extractStructAndGroups = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/extractStructAndGroups.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/const.mjs
-  var ShaderStage;
-  var init_const6 = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/const.mjs"() {
-      "use strict";
-      ShaderStage = /* @__PURE__ */ ((ShaderStage2) => {
-        ShaderStage2[ShaderStage2["VERTEX"] = 1] = "VERTEX";
-        ShaderStage2[ShaderStage2["FRAGMENT"] = 2] = "FRAGMENT";
-        ShaderStage2[ShaderStage2["COMPUTE"] = 4] = "COMPUTE";
-        return ShaderStage2;
-      })(ShaderStage || {});
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateGpuLayoutGroups.mjs
-  function generateGpuLayoutGroups({ groups }) {
-    const layout = [];
-    for (let i2 = 0; i2 < groups.length; i2++) {
-      const group = groups[i2];
-      if (!layout[group.group]) {
-        layout[group.group] = [];
-      }
-      if (group.isUniform) {
-        layout[group.group].push({
-          binding: group.binding,
-          visibility: ShaderStage.VERTEX | ShaderStage.FRAGMENT,
-          buffer: {
-            type: "uniform"
-          }
-        });
-      } else if (group.type === "sampler") {
-        layout[group.group].push({
-          binding: group.binding,
-          visibility: ShaderStage.FRAGMENT,
-          sampler: {
-            type: "filtering"
-          }
-        });
-      } else if (group.type === "texture_2d") {
-        layout[group.group].push({
-          binding: group.binding,
-          visibility: ShaderStage.FRAGMENT,
-          texture: {
-            sampleType: "float",
-            viewDimension: "2d",
-            multisampled: false
-          }
-        });
-      }
-    }
-    return layout;
-  }
-  var init_generateGpuLayoutGroups = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateGpuLayoutGroups.mjs"() {
-      init_const6();
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateLayoutHash.mjs
-  function generateLayoutHash({ groups }) {
-    const layout = [];
-    for (let i2 = 0; i2 < groups.length; i2++) {
-      const group = groups[i2];
-      if (!layout[group.group]) {
-        layout[group.group] = {};
-      }
-      layout[group.group][group.name] = group.binding;
-    }
-    return layout;
-  }
-  var init_generateLayoutHash = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/generateLayoutHash.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/removeStructAndGroupDuplicates.mjs
-  function removeStructAndGroupDuplicates(vertexStructsAndGroups, fragmentStructsAndGroups) {
-    const structNameSet = /* @__PURE__ */ new Set();
-    const dupeGroupKeySet = /* @__PURE__ */ new Set();
-    const structs = [...vertexStructsAndGroups.structs, ...fragmentStructsAndGroups.structs].filter((struct) => {
-      if (structNameSet.has(struct.name)) {
-        return false;
-      }
-      structNameSet.add(struct.name);
-      return true;
-    });
-    const groups = [...vertexStructsAndGroups.groups, ...fragmentStructsAndGroups.groups].filter((group) => {
-      const key = `${group.name}-${group.binding}`;
-      if (dupeGroupKeySet.has(key)) {
-        return false;
-      }
-      dupeGroupKeySet.add(key);
-      return true;
-    });
-    return { structs, groups };
-  }
-  var init_removeStructAndGroupDuplicates = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/utils/removeStructAndGroupDuplicates.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/GpuProgram.mjs
-  var programCache2, GpuProgram;
-  var init_GpuProgram = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/shader/GpuProgram.mjs"() {
-      init_createIdFromString();
-      init_extractAttributesFromGpuProgram();
-      init_extractStructAndGroups();
-      init_generateGpuLayoutGroups();
-      init_generateLayoutHash();
-      init_removeStructAndGroupDuplicates();
-      programCache2 = /* @__PURE__ */ Object.create(null);
-      GpuProgram = class {
-        /**
-         * Create a new GpuProgram
-         * @param options - The options for the gpu program
-         */
-        constructor(options) {
-          this._layoutKey = 0;
-          const { fragment: fragment2, vertex: vertex2, layout, gpuLayout, name } = options;
-          this.name = name;
-          this.fragment = fragment2;
-          this.vertex = vertex2;
-          if (fragment2.source === vertex2.source) {
-            const structsAndGroups = extractStructAndGroups(fragment2.source);
-            this.structsAndGroups = structsAndGroups;
-          } else {
-            const vertexStructsAndGroups = extractStructAndGroups(vertex2.source);
-            const fragmentStructsAndGroups = extractStructAndGroups(fragment2.source);
-            this.structsAndGroups = removeStructAndGroupDuplicates(vertexStructsAndGroups, fragmentStructsAndGroups);
-          }
-          this.layout = layout ?? generateLayoutHash(this.structsAndGroups);
-          this.gpuLayout = gpuLayout ?? generateGpuLayoutGroups(this.structsAndGroups);
-          this.autoAssignGlobalUniforms = !!(this.layout[0]?.globalUniforms !== void 0);
-          this.autoAssignLocalUniforms = !!(this.layout[1]?.localUniforms !== void 0);
-          this._generateProgramKey();
-        }
-        // TODO maker this pure
-        _generateProgramKey() {
-          const { vertex: vertex2, fragment: fragment2 } = this;
-          const bigKey = vertex2.source + fragment2.source + vertex2.entryPoint + fragment2.entryPoint;
-          this._layoutKey = createIdFromString(bigKey, "program");
-        }
-        get attributeData() {
-          this._attributeData ?? (this._attributeData = extractAttributesFromGpuProgram(this.vertex));
-          return this._attributeData;
-        }
-        /** destroys the program */
-        destroy() {
-          this.gpuLayout = null;
-          this.layout = null;
-          this.structsAndGroups = null;
-          this.fragment = null;
-          this.vertex = null;
-        }
-        /**
-         * Helper function that creates a program for a given source.
-         * It will check the program cache if the program has already been created.
-         * If it has that one will be returned, if not a new one will be created and cached.
-         * @param options - The options for the program.
-         * @returns A program using the same source
-         */
-        static from(options) {
-          const key = `${options.vertex.source}:${options.fragment.source}:${options.fragment.entryPoint}:${options.vertex.entryPoint}`;
-          if (!programCache2[key]) {
-            programCache2[key] = new GpuProgram(options);
-          }
-          return programCache2[key];
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/addBits.mjs
-  function addBits(srcParts, parts, name) {
-    if (srcParts) {
-      for (const i2 in srcParts) {
-        const id = i2.toLocaleLowerCase();
-        const part = parts[id];
-        if (part) {
-          let sanitisedPart = srcParts[i2];
-          if (i2 === "header") {
-            sanitisedPart = sanitisedPart.replace(/@in\s+[^;]+;\s*/g, "").replace(/@out\s+[^;]+;\s*/g, "");
-          }
-          if (name) {
-            part.push(`//----${name}----//`);
-          }
-          part.push(sanitisedPart);
-        } else {
-          warn(`${i2} placement hook does not exist in shader`);
-        }
-      }
-    }
-  }
-  var init_addBits = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/addBits.mjs"() {
-      init_warn();
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileHooks.mjs
-  function compileHooks(programSrc) {
-    const parts = {};
-    const partMatches = programSrc.match(findHooksRx)?.map((hook) => hook.replace(/[{()}]/g, "")) ?? [];
-    partMatches.forEach((hook) => {
-      parts[hook] = [];
-    });
-    return parts;
-  }
-  var findHooksRx;
-  var init_compileHooks = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileHooks.mjs"() {
-      "use strict";
-      findHooksRx = /\{\{(.*?)\}\}/g;
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileInputs.mjs
-  function extractInputs(fragmentSource, out2) {
-    let match;
-    const regex = /@in\s+([^;]+);/g;
-    while ((match = regex.exec(fragmentSource)) !== null) {
-      out2.push(match[1]);
-    }
-  }
-  function compileInputs(fragments, template, sort = false) {
-    const results = [];
-    extractInputs(template, results);
-    fragments.forEach((fragment2) => {
-      if (fragment2.header) {
-        extractInputs(fragment2.header, results);
-      }
-    });
-    const mainInput = results;
-    if (sort) {
-      mainInput.sort();
-    }
-    const finalString = mainInput.map((inValue, i2) => `       @location(${i2}) ${inValue},`).join("\n");
-    let cleanedString = template.replace(/@in\s+[^;]+;\s*/g, "");
-    cleanedString = cleanedString.replace("{{in}}", `
-${finalString}
-`);
-    return cleanedString;
-  }
-  var init_compileInputs = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileInputs.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileOutputs.mjs
-  function extractOutputs(fragmentSource, out2) {
-    let match;
-    const regex = /@out\s+([^;]+);/g;
-    while ((match = regex.exec(fragmentSource)) !== null) {
-      out2.push(match[1]);
-    }
-  }
-  function extractVariableName(value) {
-    const regex = /\b(\w+)\s*:/g;
-    const match = regex.exec(value);
-    return match ? match[1] : "";
-  }
-  function stripVariable(value) {
-    const regex = /@.*?\s+/g;
-    return value.replace(regex, "");
-  }
-  function compileOutputs(fragments, template) {
-    const results = [];
-    extractOutputs(template, results);
-    fragments.forEach((fragment2) => {
-      if (fragment2.header) {
-        extractOutputs(fragment2.header, results);
-      }
-    });
-    let index = 0;
-    const mainStruct = results.sort().map((inValue) => {
-      if (inValue.indexOf("builtin") > -1) {
-        return inValue;
-      }
-      return `@location(${index++}) ${inValue}`;
-    }).join(",\n");
-    const mainStart = results.sort().map((inValue) => `       var ${stripVariable(inValue)};`).join("\n");
-    const mainEnd = `return VSOutput(
-                ${results.sort().map((inValue) => ` ${extractVariableName(inValue)}`).join(",\n")});`;
-    let compiledCode = template.replace(/@out\s+[^;]+;\s*/g, "");
-    compiledCode = compiledCode.replace("{{struct}}", `
-${mainStruct}
-`);
-    compiledCode = compiledCode.replace("{{start}}", `
-${mainStart}
-`);
-    compiledCode = compiledCode.replace("{{return}}", `
-${mainEnd}
-`);
-    return compiledCode;
-  }
-  var init_compileOutputs = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/compileOutputs.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/injectBits.mjs
-  function injectBits(templateSrc, fragmentParts) {
-    let out2 = templateSrc;
-    for (const i2 in fragmentParts) {
-      const parts = fragmentParts[i2];
-      const toInject = parts.join("\n");
-      if (toInject.length) {
-        out2 = out2.replace(`{{${i2}}}`, `//-----${i2} START-----//
-${parts.join("\n")}
-//----${i2} FINISH----//`);
-      } else {
-        out2 = out2.replace(`{{${i2}}}`, "");
-      }
-    }
-    return out2;
-  }
-  var init_injectBits = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/utils/injectBits.mjs"() {
-      "use strict";
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/compileHighShader.mjs
-  function compileHighShader({
-    template,
-    bits
-  }) {
-    const cacheId = generateCacheId(template, bits);
-    if (cacheMap[cacheId])
-      return cacheMap[cacheId];
-    const { vertex: vertex2, fragment: fragment2 } = compileInputsAndOutputs(template, bits);
-    cacheMap[cacheId] = compileBits(vertex2, fragment2, bits);
-    return cacheMap[cacheId];
-  }
-  function compileHighShaderGl({
-    template,
-    bits
-  }) {
-    const cacheId = generateCacheId(template, bits);
-    if (cacheMap[cacheId])
-      return cacheMap[cacheId];
-    cacheMap[cacheId] = compileBits(template.vertex, template.fragment, bits);
-    return cacheMap[cacheId];
-  }
-  function compileInputsAndOutputs(template, bits) {
-    const vertexFragments = bits.map((shaderBit) => shaderBit.vertex).filter((v2) => !!v2);
-    const fragmentFragments = bits.map((shaderBit) => shaderBit.fragment).filter((v2) => !!v2);
-    let compiledVertex = compileInputs(vertexFragments, template.vertex, true);
-    compiledVertex = compileOutputs(vertexFragments, compiledVertex);
-    const compiledFragment = compileInputs(fragmentFragments, template.fragment, true);
-    return {
-      vertex: compiledVertex,
-      fragment: compiledFragment
-    };
-  }
-  function generateCacheId(template, bits) {
-    return bits.map((highFragment) => {
-      if (!bitCacheMap.has(highFragment)) {
-        bitCacheMap.set(highFragment, CACHE_UID++);
-      }
-      return bitCacheMap.get(highFragment);
-    }).sort((a2, b2) => a2 - b2).join("-") + template.vertex + template.fragment;
-  }
-  function compileBits(vertex2, fragment2, bits) {
-    const vertexParts = compileHooks(vertex2);
-    const fragmentParts = compileHooks(fragment2);
-    bits.forEach((shaderBit) => {
-      addBits(shaderBit.vertex, vertexParts, shaderBit.name);
-      addBits(shaderBit.fragment, fragmentParts, shaderBit.name);
-    });
-    return {
-      vertex: injectBits(vertex2, vertexParts),
-      fragment: injectBits(fragment2, fragmentParts)
-    };
-  }
-  var cacheMap, bitCacheMap, CACHE_UID;
-  var init_compileHighShader = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compiler/compileHighShader.mjs"() {
-      init_addBits();
-      init_compileHooks();
-      init_compileInputs();
-      init_compileOutputs();
-      init_injectBits();
-      cacheMap = /* @__PURE__ */ Object.create(null);
-      bitCacheMap = /* @__PURE__ */ new Map();
-      CACHE_UID = 0;
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/defaultProgramTemplate.mjs
-  var vertexGPUTemplate, fragmentGPUTemplate, vertexGlTemplate, fragmentGlTemplate;
-  var init_defaultProgramTemplate = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/defaultProgramTemplate.mjs"() {
-      "use strict";
-      vertexGPUTemplate = /* wgsl */
-      `
-    @in aPosition: vec2<f32>;
-    @in aUV: vec2<f32>;
-
-    @out @builtin(position) vPosition: vec4<f32>;
-    @out vUV : vec2<f32>;
-    @out vColor : vec4<f32>;
-
-    {{header}}
-
-    struct VSOutput {
-        {{struct}}
-    };
-
-    @vertex
-    fn main( {{in}} ) -> VSOutput {
-
-        var worldTransformMatrix = globalUniforms.uWorldTransformMatrix;
-        var modelMatrix = mat3x3<f32>(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0
-          );
-        var position = aPosition;
-        var uv = aUV;
-
-        {{start}}
-        
-        vColor = vec4<f32>(1., 1., 1., 1.);
-
-        {{main}}
-
-        vUV = uv;
-
-        var modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * worldTransformMatrix * modelMatrix;
-
-        vPosition =  vec4<f32>((modelViewProjectionMatrix *  vec3<f32>(position, 1.0)).xy, 0.0, 1.0);
-       
-        vColor *= globalUniforms.uWorldColorAlpha;
-
-        {{end}}
-
-        {{return}}
-    };
-`;
-      fragmentGPUTemplate = /* wgsl */
-      `
-    @in vUV : vec2<f32>;
-    @in vColor : vec4<f32>;
-   
-    {{header}}
-
-    @fragment
-    fn main(
-        {{in}}
-      ) -> @location(0) vec4<f32> {
-        
-        {{start}}
-
-        var outColor:vec4<f32>;
-      
-        {{main}}
-        
-        return outColor * vColor;
-      };
-`;
-      vertexGlTemplate = /* glsl */
-      `
-    in vec2 aPosition;
-    in vec2 aUV;
-
-    out vec4 vColor;
-    out vec2 vUV;
-
-    {{header}}
-
-    void main(void){
-
-        mat3 worldTransformMatrix = uWorldTransformMatrix;
-        mat3 modelMatrix = mat3(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0
-          );
-        vec2 position = aPosition;
-        vec2 uv = aUV;
-        
-        {{start}}
-        
-        vColor = vec4(1.);
-        
-        {{main}}
-        
-        vUV = uv;
-        
-        mat3 modelViewProjectionMatrix = uProjectionMatrix * worldTransformMatrix * modelMatrix;
-
-        gl_Position = vec4((modelViewProjectionMatrix * vec3(position, 1.0)).xy, 0.0, 1.0);
-
-        vColor *= uWorldColorAlpha;
-
-        {{end}}
-    }
-`;
-      fragmentGlTemplate = /* glsl */
-      `
-   
-    in vec4 vColor;
-    in vec2 vUV;
-
-    out vec4 finalColor;
-
-    {{header}}
-
-    void main(void) {
-        
-        {{start}}
-
-        vec4 outColor;
-      
-        {{main}}
-        
-        finalColor = outColor * vColor;
-    }
-`;
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/globalUniformsBit.mjs
-  var globalUniformsBit, globalUniformsBitGl;
-  var init_globalUniformsBit = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/globalUniformsBit.mjs"() {
-      "use strict";
-      globalUniformsBit = {
-        name: "global-uniforms-bit",
-        vertex: {
-          header: (
-            /* wgsl */
-            `
-        struct GlobalUniforms {
-            uProjectionMatrix:mat3x3<f32>,
-            uWorldTransformMatrix:mat3x3<f32>,
-            uWorldColorAlpha: vec4<f32>,
-            uResolution: vec2<f32>,
-        }
-
-        @group(0) @binding(0) var<uniform> globalUniforms : GlobalUniforms;
-        `
-          )
-        }
-      };
-      globalUniformsBitGl = {
-        name: "global-uniforms-bit",
-        vertex: {
-          header: (
-            /* glsl */
-            `
-          uniform mat3 uProjectionMatrix;
-          uniform mat3 uWorldTransformMatrix;
-          uniform vec4 uWorldColorAlpha;
-          uniform vec2 uResolution;
-        `
-          )
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/compileHighShaderToProgram.mjs
-  function compileHighShaderGpuProgram({ bits, name }) {
-    const source2 = compileHighShader({
-      template: {
-        fragment: fragmentGPUTemplate,
-        vertex: vertexGPUTemplate
-      },
-      bits: [
-        globalUniformsBit,
-        ...bits
-      ]
-    });
-    return GpuProgram.from({
-      name,
-      vertex: {
-        source: source2.vertex,
-        entryPoint: "main"
-      },
-      fragment: {
-        source: source2.fragment,
-        entryPoint: "main"
-      }
-    });
-  }
-  function compileHighShaderGlProgram({ bits, name }) {
-    return new GlProgram({
-      name,
-      ...compileHighShaderGl({
-        template: {
-          vertex: vertexGlTemplate,
-          fragment: fragmentGlTemplate
-        },
-        bits: [
-          globalUniformsBitGl,
-          ...bits
-        ]
-      })
-    });
-  }
-  var init_compileHighShaderToProgram = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/compileHighShaderToProgram.mjs"() {
-      init_GlProgram();
-      init_GpuProgram();
-      init_compileHighShader();
-      init_defaultProgramTemplate();
-      init_globalUniformsBit();
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/colorBit.mjs
-  var colorBit, colorBitGl;
-  var init_colorBit = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/colorBit.mjs"() {
-      "use strict";
-      colorBit = {
-        name: "color-bit",
-        vertex: {
-          header: (
-            /* wgsl */
-            `
-            @in aColor: vec4<f32>;
-        `
-          ),
-          main: (
-            /* wgsl */
-            `
-            vColor *= vec4<f32>(aColor.rgb * aColor.a, aColor.a);
-        `
-          )
-        }
-      };
-      colorBitGl = {
-        name: "color-bit",
-        vertex: {
-          header: (
-            /* glsl */
-            `
-            in vec4 aColor;
-        `
-          ),
-          main: (
-            /* glsl */
-            `
-            vColor *= vec4(aColor.rgb * aColor.a, aColor.a);
-        `
-          )
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/generateTextureBatchBit.mjs
-  function generateBindingSrc(maxTextures2) {
-    const src = [];
-    if (maxTextures2 === 1) {
-      src.push("@group(1) @binding(0) var textureSource1: texture_2d<f32>;");
-      src.push("@group(1) @binding(1) var textureSampler1: sampler;");
-    } else {
-      let bindingIndex = 0;
-      for (let i2 = 0; i2 < maxTextures2; i2++) {
-        src.push(`@group(1) @binding(${bindingIndex++}) var textureSource${i2 + 1}: texture_2d<f32>;`);
-        src.push(`@group(1) @binding(${bindingIndex++}) var textureSampler${i2 + 1}: sampler;`);
-      }
-    }
-    return src.join("\n");
-  }
-  function generateSampleSrc(maxTextures2) {
-    const src = [];
-    if (maxTextures2 === 1) {
-      src.push("outColor = textureSampleGrad(textureSource1, textureSampler1, vUV, uvDx, uvDy);");
-    } else {
-      src.push("switch vTextureId {");
-      for (let i2 = 0; i2 < maxTextures2; i2++) {
-        if (i2 === maxTextures2 - 1) {
-          src.push(`  default:{`);
-        } else {
-          src.push(`  case ${i2}:{`);
-        }
-        src.push(`      outColor = textureSampleGrad(textureSource${i2 + 1}, textureSampler${i2 + 1}, vUV, uvDx, uvDy);`);
-        src.push(`      break;}`);
-      }
-      src.push(`}`);
-    }
-    return src.join("\n");
-  }
-  function generateTextureBatchBit(maxTextures2) {
-    if (!textureBatchBitGpuCache[maxTextures2]) {
-      textureBatchBitGpuCache[maxTextures2] = {
-        name: "texture-batch-bit",
-        vertex: {
-          header: `
-                @in aTextureIdAndRound: vec2<u32>;
-                @out @interpolate(flat) vTextureId : u32;
-            `,
-          main: `
-                vTextureId = aTextureIdAndRound.y;
-            `,
-          end: `
-                if(aTextureIdAndRound.x == 1)
-                {
-                    vPosition = vec4<f32>(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
-                }
-            `
-        },
-        fragment: {
-          header: `
-                @in @interpolate(flat) vTextureId: u32;
-    
-                ${generateBindingSrc(maxRecommendedTextures())}
-            `,
-          main: `
-                var uvDx = dpdx(vUV);
-                var uvDy = dpdy(vUV);
-    
-                ${generateSampleSrc(maxRecommendedTextures())}
-            `
-        }
-      };
-    }
-    return textureBatchBitGpuCache[maxTextures2];
-  }
-  function generateSampleGlSrc(maxTextures2) {
-    const src = [];
-    for (let i2 = 0; i2 < maxTextures2; i2++) {
-      if (i2 > 0) {
-        src.push("else");
-      }
-      if (i2 < maxTextures2 - 1) {
-        src.push(`if(vTextureId < ${i2}.5)`);
-      }
-      src.push("{");
-      src.push(`	outColor = texture(uTextures[${i2}], vUV);`);
-      src.push("}");
-    }
-    return src.join("\n");
-  }
-  function generateTextureBatchBitGl(maxTextures2) {
-    if (!textureBatchBitGlCache[maxTextures2]) {
-      textureBatchBitGlCache[maxTextures2] = {
-        name: "texture-batch-bit",
-        vertex: {
-          header: `
-                in vec2 aTextureIdAndRound;
-                out float vTextureId;
-              
-            `,
-          main: `
-                vTextureId = aTextureIdAndRound.y;
-            `,
-          end: `
-                if(aTextureIdAndRound.x == 1.)
-                {
-                    gl_Position.xy = roundPixels(gl_Position.xy, uResolution);
-                }
-            `
-        },
-        fragment: {
-          header: `
-                in float vTextureId;
-    
-                uniform sampler2D uTextures[${maxTextures2}];
-              
-            `,
-          main: `
-    
-                ${generateSampleGlSrc(maxRecommendedTextures())}
-            `
-        }
-      };
-    }
-    return textureBatchBitGlCache[maxTextures2];
-  }
-  var textureBatchBitGpuCache, textureBatchBitGlCache;
-  var init_generateTextureBatchBit = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/generateTextureBatchBit.mjs"() {
-      init_maxRecommendedTextures();
-      textureBatchBitGpuCache = {};
-      textureBatchBitGlCache = {};
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/roundPixelsBit.mjs
-  var roundPixelsBit, roundPixelsBitGl;
-  var init_roundPixelsBit = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/high-shader/shader-bits/roundPixelsBit.mjs"() {
-      "use strict";
-      roundPixelsBit = {
-        name: "round-pixels-bit",
-        vertex: {
-          header: (
-            /* wgsl */
-            `
-            fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> 
-            {
-                return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
-            }
-        `
-          )
-        }
-      };
-      roundPixelsBitGl = {
-        name: "round-pixels-bit",
-        vertex: {
-          header: (
-            /* glsl */
-            `   
-            vec2 roundPixels(vec2 position, vec2 targetSize)
-            {       
-                return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
-            }
-        `
-          )
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/getBatchSamplersUniformGroup.mjs
-  function getBatchSamplersUniformGroup(maxTextures2) {
-    let batchSamplersUniformGroup = batchSamplersUniformGroupHash[maxTextures2];
-    if (batchSamplersUniformGroup)
-      return batchSamplersUniformGroup;
-    const sampleValues = new Int32Array(maxTextures2);
-    for (let i2 = 0; i2 < maxTextures2; i2++) {
-      sampleValues[i2] = i2;
-    }
-    batchSamplersUniformGroup = batchSamplersUniformGroupHash[maxTextures2] = new UniformGroup({
-      uTextures: { value: sampleValues, type: `i32`, size: maxTextures2 }
-    }, { isStatic: true });
-    return batchSamplersUniformGroup;
-  }
-  var batchSamplersUniformGroupHash;
-  var init_getBatchSamplersUniformGroup = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/getBatchSamplersUniformGroup.mjs"() {
-      init_UniformGroup();
-      batchSamplersUniformGroupHash = {};
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/types.mjs
-  var RendererType;
-  var init_types2 = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/types.mjs"() {
-      "use strict";
-      RendererType = /* @__PURE__ */ ((RendererType2) => {
-        RendererType2[RendererType2["WEBGL"] = 1] = "WEBGL";
-        RendererType2[RendererType2["WEBGPU"] = 2] = "WEBGPU";
-        RendererType2[RendererType2["BOTH"] = 3] = "BOTH";
-        return RendererType2;
-      })(RendererType || {});
-    }
-  });
-
-  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/Shader.mjs
-  var Shader;
-  var init_Shader = __esm({
-    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/Shader.mjs"() {
-      init_eventemitter3();
-      init_GlProgram();
-      init_BindGroup();
-      init_GpuProgram();
-      init_types2();
-      init_UniformGroup();
-      Shader = class extends eventemitter3_default {
-        constructor(options) {
-          super();
-          this._uniformBindMap = /* @__PURE__ */ Object.create(null);
-          this._ownedBindGroups = [];
-          let {
-            gpuProgram: gpuProgram3,
-            glProgram: glProgram3,
-            groups,
-            resources,
-            compatibleRenderers,
-            groupMap
-          } = options;
-          this.gpuProgram = gpuProgram3;
-          this.glProgram = glProgram3;
-          if (compatibleRenderers === void 0) {
-            compatibleRenderers = 0;
-            if (gpuProgram3)
-              compatibleRenderers |= RendererType.WEBGPU;
-            if (glProgram3)
-              compatibleRenderers |= RendererType.WEBGL;
-          }
-          this.compatibleRenderers = compatibleRenderers;
-          const nameHash = {};
-          if (!resources && !groups) {
-            resources = {};
-          }
-          if (resources && groups) {
-            throw new Error("[Shader] Cannot have both resources and groups");
-          } else if (!gpuProgram3 && groups && !groupMap) {
-            throw new Error("[Shader] No group map or WebGPU shader provided - consider using resources instead.");
-          } else if (!gpuProgram3 && groups && groupMap) {
-            for (const i2 in groupMap) {
-              for (const j2 in groupMap[i2]) {
-                const uniformName = groupMap[i2][j2];
-                nameHash[uniformName] = {
-                  group: i2,
-                  binding: j2,
-                  name: uniformName
-                };
-              }
-            }
-          } else if (gpuProgram3 && groups && !groupMap) {
-            const groupData = gpuProgram3.structsAndGroups.groups;
-            groupMap = {};
-            groupData.forEach((data) => {
-              groupMap[data.group] = groupMap[data.group] || {};
-              groupMap[data.group][data.binding] = data.name;
-              nameHash[data.name] = data;
-            });
-          } else if (resources) {
-            if (!gpuProgram3) {
-              groupMap = {};
-              groups = {
-                99: new BindGroup()
-              };
-              this._ownedBindGroups.push(groups[99]);
-              let bindTick = 0;
-              for (const i2 in resources) {
-                nameHash[i2] = { group: 99, binding: bindTick, name: i2 };
-                groupMap[99] = groupMap[99] || {};
-                groupMap[99][bindTick] = i2;
-                bindTick++;
-              }
-            } else {
-              const groupData = gpuProgram3.structsAndGroups.groups;
-              groupMap = {};
-              groupData.forEach((data) => {
-                groupMap[data.group] = groupMap[data.group] || {};
-                groupMap[data.group][data.binding] = data.name;
-                nameHash[data.name] = data;
-              });
-            }
-            groups = {};
-            for (const i2 in resources) {
-              const name = i2;
-              let value = resources[i2];
-              if (!value.source && !value._resourceType) {
-                value = new UniformGroup(value);
-              }
-              const data = nameHash[name];
-              if (data) {
-                if (!groups[data.group]) {
-                  groups[data.group] = new BindGroup();
-                  this._ownedBindGroups.push(groups[data.group]);
-                }
-                groups[data.group].setResource(value, data.binding);
-              }
-            }
-          }
-          this.groups = groups;
-          this._uniformBindMap = groupMap;
-          this.resources = this._buildResourceAccessor(groups, nameHash);
-        }
-        /**
-         * Sometimes a resource group will be provided later (for example global uniforms)
-         * In such cases, this method can be used to let the shader know about the group.
-         * @param name - the name of the resource group
-         * @param groupIndex - the index of the group (should match the webGPU shader group location)
-         * @param bindIndex - the index of the bind point (should match the webGPU shader bind point)
-         */
-        addResource(name, groupIndex, bindIndex) {
-          var _a, _b;
-          (_a = this._uniformBindMap)[groupIndex] || (_a[groupIndex] = {});
-          (_b = this._uniformBindMap[groupIndex])[bindIndex] || (_b[bindIndex] = name);
-          if (!this.groups[groupIndex]) {
-            this.groups[groupIndex] = new BindGroup();
-            this._ownedBindGroups.push(this.groups[groupIndex]);
-          }
-        }
-        _buildResourceAccessor(groups, nameHash) {
-          const uniformsOut = {};
-          for (const i2 in nameHash) {
-            const data = nameHash[i2];
-            Object.defineProperty(uniformsOut, data.name, {
-              get() {
-                return groups[data.group].getResource(data.binding);
-              },
-              set(value) {
-                groups[data.group].setResource(value, data.binding);
-              }
-            });
-          }
-          return uniformsOut;
-        }
-        /**
-         * Use to destroy the shader when its not longer needed.
-         * It will destroy the resources and remove listeners.
-         * @param destroyPrograms - if the programs should be destroyed as well.
-         * Make sure its not being used by other shaders!
-         */
-        destroy(destroyPrograms = false) {
-          this.emit("destroy", this);
-          if (destroyPrograms) {
-            this.gpuProgram?.destroy();
-            this.glProgram?.destroy();
-          }
-          this.gpuProgram = null;
-          this.glProgram = null;
-          this.removeAllListeners();
-          this._uniformBindMap = null;
-          this._ownedBindGroups.forEach((bindGroup) => {
-            bindGroup.destroy();
-          });
-          this._ownedBindGroups = null;
-          this.resources = null;
-          this.groups = null;
-        }
-        static from(options) {
-          const { gpu, gl, ...rest } = options;
-          let gpuProgram3;
-          let glProgram3;
-          if (gpu) {
-            gpuProgram3 = GpuProgram.from(gpu);
-          }
-          if (gl) {
-            glProgram3 = GlProgram.from(gl);
-          }
-          return new Shader({
-            gpuProgram: gpuProgram3,
-            glProgram: glProgram3,
-            ...rest
-          });
-        }
-      };
-    }
-  });
-
   // ../core/node_modules/pixi.js/lib/scene/text/sdfShader/shader-bits/localUniformMSDFBit.mjs
   var localUniformMSDFBit, localUniformMSDFBitGl;
   var init_localUniformMSDFBit = __esm({
@@ -21941,6 +22840,7 @@ ${parts.join("\n")}
   var init_SdfShader = __esm({
     "../core/node_modules/pixi.js/lib/scene/text/sdfShader/SdfShader.mjs"() {
       init_Matrix();
+      init_maxRecommendedTextures();
       init_compileHighShaderToProgram();
       init_colorBit();
       init_generateTextureBatchBit();
@@ -21948,7 +22848,6 @@ ${parts.join("\n")}
       init_getBatchSamplersUniformGroup();
       init_Shader();
       init_UniformGroup();
-      init_maxRecommendedTextures();
       init_localUniformMSDFBit();
       init_mSDFBit();
       SdfShader = class extends Shader {
@@ -21959,7 +22858,7 @@ ${parts.join("\n")}
             uDistance: { value: 4, type: "f32" },
             uRound: { value: 0, type: "f32" }
           });
-          const maxTextures2 = maxRecommendedTextures();
+          const maxTextures2 = getMaxTexturesPerBatch();
           gpuProgram ?? (gpuProgram = compileHighShaderGpuProgram({
             name: "sdf-shader",
             bits: [
@@ -22009,6 +22908,7 @@ ${parts.join("\n")}
           this.baseLineOffset = 0;
           this.distanceField = { type: "none", range: 0 };
           this.pages = [];
+          this.applyFillAsTint = true;
           this.baseMeasurementFontSize = 100;
           this.baseRenderedFontSize = 100;
         }
@@ -22110,7 +23010,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text-bitmap/DynamicBitmapFont.mjs
-  var DynamicBitmapFont;
+  var _DynamicBitmapFont, DynamicBitmapFont;
   var init_DynamicBitmapFont = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-bitmap/DynamicBitmapFont.mjs"() {
       init_Color();
@@ -22122,9 +23022,10 @@ ${parts.join("\n")}
       init_CanvasTextMetrics();
       init_fontStringFromTextStyle();
       init_getCanvasFillStyle();
+      init_TextStyle();
       init_AbstractBitmapFont();
       init_resolveCharacters();
-      DynamicBitmapFont = class extends AbstractBitmapFont {
+      _DynamicBitmapFont = class _DynamicBitmapFont2 extends AbstractBitmapFont {
         /**
          * @param options - The options for the dynamic bitmap font.
          */
@@ -22132,14 +23033,16 @@ ${parts.join("\n")}
           super();
           this.resolution = 1;
           this.pages = [];
-          this._padding = 4;
+          this._padding = 0;
           this._measureCache = /* @__PURE__ */ Object.create(null);
           this._currentChars = [];
           this._currentX = 0;
           this._currentY = 0;
           this._currentPageIndex = -1;
           this._skipKerning = false;
-          const dynamicOptions = options;
+          const dynamicOptions = { ..._DynamicBitmapFont2.defaultOptions, ...options };
+          this._textureSize = dynamicOptions.textureSize;
+          this._mipmap = dynamicOptions.mipmap;
           const style = dynamicOptions.style.clone();
           if (dynamicOptions.overrideFill) {
             style._fill.color = 16777215;
@@ -22147,6 +23050,7 @@ ${parts.join("\n")}
             style._fill.texture = Texture.WHITE;
             style._fill.fill = null;
           }
+          this.applyFillAsTint = dynamicOptions.overrideFill;
           const requestedFontSize = style.fontSize;
           style.fontSize = this.baseMeasurementFontSize;
           const font = fontStringFromTextStyle(style);
@@ -22182,27 +23086,27 @@ ${parts.join("\n")}
           let currentY = this._currentY;
           const fontScale = this.baseRenderedFontSize / this.baseMeasurementFontSize;
           const padding = this._padding * fontScale;
-          const widthScale = style.fontStyle === "italic" ? 2 : 1;
           let maxCharHeight = 0;
           let skipTexture = false;
           for (let i2 = 0; i2 < charList.length; i2++) {
             const char = charList[i2];
             const metrics = CanvasTextMetrics.measureText(char, style, canvas, false);
+            const textureGlyphWidth = Math.ceil((style.fontStyle === "italic" ? 2 : 1) * metrics.width);
             metrics.lineHeight = metrics.height;
-            const width = widthScale * metrics.width * fontScale;
+            const width = metrics.width * fontScale;
             const height = metrics.height * fontScale;
-            const paddedWidth = width + padding * 2;
+            const paddedWidth = textureGlyphWidth + padding * 2;
             const paddedHeight = height + padding * 2;
             skipTexture = false;
             if (char !== "\n" && char !== "\r" && char !== "	" && char !== " ") {
               skipTexture = true;
               maxCharHeight = Math.ceil(Math.max(paddedHeight, maxCharHeight));
             }
-            if (currentX + paddedWidth > 512) {
+            if (currentX + paddedWidth > this._textureSize) {
               currentY += maxCharHeight;
               maxCharHeight = paddedHeight;
               currentX = 0;
-              if (currentY + maxCharHeight > 512) {
+              if (currentY + maxCharHeight > this._textureSize) {
                 textureSource.update();
                 const pageData2 = this._nextPage();
                 canvas = pageData2.canvasAndContext.canvas;
@@ -22284,14 +23188,19 @@ ${parts.join("\n")}
         _nextPage() {
           this._currentPageIndex++;
           const textureResolution = this.resolution;
-          const canvasAndContext = CanvasPool.getOptimalCanvasAndContext(512, 512, textureResolution);
+          const canvasAndContext = CanvasPool.getOptimalCanvasAndContext(
+            this._textureSize,
+            this._textureSize,
+            textureResolution
+          );
           this._setupContext(canvasAndContext.context, this._style, textureResolution);
           const resolution = textureResolution * (this.baseRenderedFontSize / this.baseMeasurementFontSize);
           const texture = new Texture({
             source: new ImageSource({
               resource: canvasAndContext.canvas,
               resolution,
-              alphaMode: "premultiply-alpha-on-upload"
+              alphaMode: "premultiply-alpha-on-upload",
+              autoGenerateMipmaps: this._mipmap
             })
           });
           const pageData = {
@@ -22361,11 +23270,17 @@ ${parts.join("\n")}
           this.pages = null;
         }
       };
+      _DynamicBitmapFont.defaultOptions = {
+        textureSize: 512,
+        style: new TextStyle(),
+        mipmap: true
+      };
+      DynamicBitmapFont = _DynamicBitmapFont;
     }
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text-bitmap/utils/getBitmapTextLayout.mjs
-  function getBitmapTextLayout(chars, style, font) {
+  function getBitmapTextLayout(chars, style, font, trimEnd) {
     const layoutData = {
       width: 0,
       height: 0,
@@ -22407,10 +23322,12 @@ ${parts.join("\n")}
     };
     const nextLine = () => {
       let index = currentLine.chars.length - 1;
-      let lastChar = currentLine.chars[index];
-      while (lastChar === " ") {
-        currentLine.width -= font.chars[lastChar].xAdvance;
-        lastChar = currentLine.chars[--index];
+      if (trimEnd) {
+        let lastChar = currentLine.chars[index];
+        while (lastChar === " ") {
+          currentLine.width -= font.chars[lastChar].xAdvance;
+          lastChar = currentLine.chars[--index];
+        }
       }
       layoutData.width = Math.max(layoutData.width, currentLine.width);
       currentLine = {
@@ -22525,15 +23442,17 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text-bitmap/BitmapFontManager.mjs
-  var BitmapFontManagerClass, BitmapFontManager;
+  var fontCount, BitmapFontManagerClass, BitmapFontManager;
   var init_BitmapFontManager = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-bitmap/BitmapFontManager.mjs"() {
       init_Cache();
       init_deprecation();
+      init_warn();
       init_TextStyle();
       init_DynamicBitmapFont();
       init_getBitmapTextLayout();
       init_resolveCharacters();
+      fontCount = 0;
       BitmapFontManagerClass = class {
         constructor() {
           this.ALPHA = [["a", "z"], ["A", "Z"], " "];
@@ -22555,8 +23474,13 @@ ${parts.join("\n")}
         getFont(text2, style) {
           let fontFamilyKey = `${style.fontFamily}-bitmap`;
           let overrideFill = true;
-          if (style._fill.fill) {
-            fontFamilyKey += style._fill.fill.uid;
+          if (style._fill.fill && !style._stroke) {
+            fontFamilyKey += style._fill.fill.styleKey;
+            overrideFill = false;
+          } else if (style._stroke || style.dropShadow) {
+            let key = style.styleKey;
+            key = key.substring(0, key.lastIndexOf("-"));
+            fontFamilyKey = `${key}-bitmap`;
             overrideFill = false;
           }
           if (!Cache.has(fontFamilyKey)) {
@@ -22566,7 +23490,14 @@ ${parts.join("\n")}
               overrideSize: true,
               ...this.defaultOptions
             });
-            fnt.once("destroy", () => Cache.remove(fontFamilyKey));
+            fontCount++;
+            if (fontCount > 50) {
+              warn("BitmapText", `You have dynamically created ${fontCount} bitmap fonts, this can be inefficient. Try pre installing your font styles using \`BitmapFont.install({name:"style1", style})\``);
+            }
+            fnt.once("destroy", () => {
+              fontCount--;
+              Cache.remove(fontFamilyKey);
+            });
             Cache.set(
               fontFamilyKey,
               fnt
@@ -22580,18 +23511,20 @@ ${parts.join("\n")}
          * Get the layout of a text for the specified style.
          * @param text - The text to get the layout for
          * @param style - The style to use
+         * @param trimEnd - Whether to ignore whitespaces at the end of each line
          */
-        getLayout(text2, style) {
+        getLayout(text2, style, trimEnd = true) {
           const bitmapFont = this.getFont(text2, style);
-          return getBitmapTextLayout([...text2], style, bitmapFont);
+          return getBitmapTextLayout([...text2], style, bitmapFont, trimEnd);
         }
         /**
          * Measure the text using the specified style.
          * @param text - The text to measure
          * @param style - The style to use
+         * @param trimEnd - Whether to ignore whitespaces at the end of each line
          */
-        measureText(text2, style) {
-          return this.getLayout(text2, style);
+        measureText(text2, style, trimEnd = true) {
+          return this.getLayout(text2, style, trimEnd);
         }
         // eslint-disable-next-line max-len
         install(...args) {
@@ -22637,7 +23570,6 @@ ${parts.join("\n")}
           const cacheKey = `${name}-bitmap`;
           const font = Cache.get(cacheKey);
           if (font) {
-            Cache.remove(cacheKey);
             font.destroy();
           }
         }
@@ -22669,10 +23601,11 @@ ${parts.join("\n")}
       init_BitmapFontManager();
       init_getBitmapTextLayout();
       BitmapTextPipe = class {
-        // private _sdfShader: SdfShader;
         constructor(renderer) {
           this._gpuBitmapText = {};
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_gpuBitmapText");
         }
         validateRenderable(bitmapText) {
           const graphicsRenderable = this._getGpuBitmapText(bitmapText);
@@ -22695,6 +23628,7 @@ ${parts.join("\n")}
           }
         }
         destroyRenderable(bitmapText) {
+          bitmapText.off("destroyed", this._destroyRenderableBound);
           this._destroyRenderableByUid(bitmapText.uid);
         }
         _destroyRenderableByUid(renderableUid) {
@@ -22725,17 +23659,19 @@ ${parts.join("\n")}
           }
           const chars = Array.from(bitmapText.text);
           const style = bitmapText._style;
-          let currentY = (style._stroke?.width || 0) / 2;
-          currentY += bitmapFont.baseLineOffset;
-          const bitmapTextLayout = getBitmapTextLayout(chars, style, bitmapFont);
+          let currentY = bitmapFont.baseLineOffset;
+          const bitmapTextLayout = getBitmapTextLayout(chars, style, bitmapFont, true);
           let index = 0;
           const padding = style.padding;
           const scale = bitmapTextLayout.scale;
-          context4.translate(
-            -bitmapText._anchor._x * bitmapTextLayout.width - padding,
-            -bitmapText._anchor._y * (bitmapTextLayout.height + bitmapTextLayout.offsetY) - padding
-          ).scale(scale, scale);
-          const tint = style._fill.color;
+          let tx = bitmapTextLayout.width;
+          let ty = bitmapTextLayout.height + bitmapTextLayout.offsetY;
+          if (style._stroke) {
+            tx += style._stroke.width / scale;
+            ty += style._stroke.width / scale;
+          }
+          context4.translate(-bitmapText._anchor._x * tx - padding, -bitmapText._anchor._y * ty - padding).scale(scale, scale);
+          const tint = bitmapFont.applyFillAsTint ? style._fill.color : 16777215;
           for (let i2 = 0; i2 < bitmapTextLayout.lines.length; i2++) {
             const line = bitmapTextLayout.lines[i2];
             for (let j2 = 0; j2 < line.charPositions.length; j2++) {
@@ -22760,9 +23696,7 @@ ${parts.join("\n")}
           const proxyRenderable = BigPool.get(Graphics);
           this._gpuBitmapText[bitmapText.uid] = proxyRenderable;
           this._updateContext(bitmapText, proxyRenderable);
-          bitmapText.on("destroyed", () => {
-            this.destroyRenderable(bitmapText);
-          });
+          bitmapText.on("destroyed", this._destroyRenderableBound);
           return this._gpuBitmapText[bitmapText.uid];
         }
         _updateDistanceField(bitmapText) {
@@ -22778,8 +23712,8 @@ ${parts.join("\n")}
           context4.customShader.resources.localUniforms.uniforms.uDistance = distance;
         }
         destroy() {
-          for (const uid3 in this._gpuBitmapText) {
-            this._destroyRenderableByUid(uid3);
+          for (const uid4 in this._gpuBitmapText) {
+            this._destroyRenderableByUid(uid4);
           }
           this._gpuBitmapText = null;
           this._renderer = null;
@@ -22797,7 +23731,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text-bitmap/init.mjs
-  var init_init9 = __esm({
+  var init_init10 = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-bitmap/init.mjs"() {
       init_Extensions();
       init_BitmapTextPipe();
@@ -22817,7 +23751,22 @@ ${parts.join("\n")}
       HTMLTextPipe = class {
         constructor(renderer) {
           this._gpuText = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.runners.resolutionChange.add(this);
+          this._renderer.renderableGC.addManagedHash(this, "_gpuText");
+        }
+        resolutionChange() {
+          for (const i2 in this._gpuText) {
+            const gpuText = this._gpuText[i2];
+            if (!gpuText)
+              continue;
+            const text2 = gpuText.batchableSprite.renderable;
+            if (text2._autoResolution) {
+              text2._resolution = this._renderer.resolution;
+              text2.onViewUpdate();
+            }
+          }
         }
         validateRenderable(htmlText) {
           const gpuText = this._getGpuText(htmlText);
@@ -22831,13 +23780,13 @@ ${parts.join("\n")}
           }
           return false;
         }
-        addRenderable(htmlText) {
+        addRenderable(htmlText, instructionSet) {
           const gpuText = this._getGpuText(htmlText);
           const batchableSprite = gpuText.batchableSprite;
           if (htmlText._didTextUpdate) {
             this._updateText(htmlText);
           }
-          this._renderer.renderPipes.batch.addToBatch(batchableSprite);
+          this._renderer.renderPipes.batch.addToBatch(batchableSprite, instructionSet);
         }
         updateRenderable(htmlText) {
           const gpuText = this._getGpuText(htmlText);
@@ -22845,9 +23794,10 @@ ${parts.join("\n")}
           if (htmlText._didTextUpdate) {
             this._updateText(htmlText);
           }
-          batchableSprite.batcher.updateElement(batchableSprite);
+          batchableSprite._batcher.updateElement(batchableSprite);
         }
         destroyRenderable(htmlText) {
+          htmlText.off("destroyed", this._destroyRenderableBound);
           this._destroyRenderableById(htmlText.uid);
         }
         _destroyRenderableById(htmlTextUid) {
@@ -22906,13 +23856,13 @@ ${parts.join("\n")}
           };
           const batchableSprite = gpuTextData.batchableSprite;
           batchableSprite.renderable = htmlText;
+          batchableSprite.transform = htmlText.groupTransform;
           batchableSprite.texture = Texture.EMPTY;
           batchableSprite.bounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
           batchableSprite.roundPixels = this._renderer._roundPixels | htmlText._roundPixels;
+          htmlText._resolution = htmlText._autoResolution ? this._renderer.resolution : htmlText.resolution;
           this._gpuText[htmlText.uid] = gpuTextData;
-          htmlText.on("destroyed", () => {
-            this.destroyRenderable(htmlText);
-          });
+          htmlText.on("destroyed", this._destroyRenderableBound);
           return gpuTextData;
         }
         destroy() {
@@ -23243,7 +24193,11 @@ ${parts.join("\n")}
       if (!FontStylePromiseCache.has(fontFamily)) {
         const { url } = Cache.get(`${fontFamily}-and-url`);
         if (i2 === 0) {
-          FontStylePromiseCache.set(fontFamily, loadFontCSS(style, url));
+          FontStylePromiseCache.set(fontFamily, loadFontCSS({
+            fontWeight: style.fontWeight,
+            fontStyle: style.fontStyle,
+            fontFamily
+          }, url));
         } else {
           FontStylePromiseCache.set(fontFamily, loadFontCSS({
             fontWeight: defaultOptions.fontWeight,
@@ -23268,7 +24222,7 @@ ${parts.join("\n")}
   // ../core/node_modules/pixi.js/lib/scene/text-html/utils/getSVGUrl.mjs
   function getSVGUrl(text2, style, resolution, fontCSS, htmlTextData) {
     const { domElement, styleElement, svgRoot } = htmlTextData;
-    domElement.innerHTML = `<style>${style.cssStyle}</style><div>${text2}</div>`;
+    domElement.innerHTML = `<style>${style.cssStyle}</style><div style='padding:0;'>${text2}</div>`;
     domElement.setAttribute("style", `transform: scale(${resolution});transform-origin: top left; display: inline-block`);
     styleElement.textContent = fontCSS;
     const { width, height } = htmlTextData.image;
@@ -23292,8 +24246,7 @@ ${parts.join("\n")}
     const { context: context4 } = canvasAndContext;
     context4.clearRect(0, 0, image.width, image.height);
     context4.drawImage(image, 0, 0);
-    CanvasPool.returnCanvasAndContext(canvasAndContext);
-    return canvasAndContext.canvas;
+    return canvasAndContext;
   }
   var init_getTemporaryCanvasFromImage = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-html/utils/getTemporaryCanvasFromImage.mjs"() {
@@ -23324,7 +24277,7 @@ ${parts.join("\n")}
   function measureHtmlText(text2, style, fontStyleCSS, htmlTextRenderData) {
     htmlTextRenderData = htmlTextRenderData || tempHTMLTextRenderData || (tempHTMLTextRenderData = new HTMLTextRenderData());
     const { domElement, styleElement, svgRoot } = htmlTextRenderData;
-    domElement.innerHTML = `<style>${style.cssStyle}</style><div>${text2}</div>`;
+    domElement.innerHTML = `<style>${style.cssStyle};</style><div style='padding:0'>${text2}</div>`;
     domElement.setAttribute("style", "transform-origin: top left; display: inline-block");
     if (fontStyleCSS) {
       styleElement.textContent = fontStyleCSS;
@@ -23332,16 +24285,15 @@ ${parts.join("\n")}
     document.body.appendChild(svgRoot);
     const contentBounds = domElement.getBoundingClientRect();
     svgRoot.remove();
-    const descenderPadding = CanvasTextMetrics.measureFont(style.fontStyle).descent;
+    const doublePadding = style.padding * 2;
     return {
-      width: contentBounds.width,
-      height: contentBounds.height + descenderPadding
+      width: contentBounds.width - doublePadding,
+      height: contentBounds.height - doublePadding
     };
   }
   var tempHTMLTextRenderData;
   var init_measureHtmlText = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-html/utils/measureHtmlText.mjs"() {
-      init_CanvasTextMetrics();
       init_HTMLTextRenderData();
     }
   });
@@ -23351,6 +24303,7 @@ ${parts.join("\n")}
   var init_HTMLTextSystem = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-html/HTMLTextSystem.mjs"() {
       init_Extensions();
+      init_CanvasPool();
       init_TexturePool();
       init_types2();
       init_isSafari();
@@ -23406,17 +24359,25 @@ ${parts.join("\n")}
           const width = Math.ceil(Math.ceil(Math.max(1, measured.width) + style.padding * 2) * resolution);
           const height = Math.ceil(Math.ceil(Math.max(1, measured.height) + style.padding * 2) * resolution);
           const image = htmlTextData.image;
-          image.width = width | 0;
-          image.height = height | 0;
+          const uvSafeOffset = 2;
+          image.width = (width | 0) + uvSafeOffset;
+          image.height = (height | 0) + uvSafeOffset;
           const svgURL = getSVGUrl(text2, style, resolution, fontCSS, htmlTextData);
           await loadSVGImage(image, svgURL, isSafari() && fontFamilies.length > 0);
-          let resource = image;
+          const resource = image;
+          let canvasAndContext;
           if (this._createCanvas) {
-            resource = getTemporaryCanvasFromImage(image, resolution);
+            canvasAndContext = getTemporaryCanvasFromImage(image, resolution);
           }
-          const texture = getPo2TextureFromSource(resource, image.width, image.height, resolution);
+          const texture = getPo2TextureFromSource(
+            canvasAndContext ? canvasAndContext.canvas : resource,
+            image.width - uvSafeOffset,
+            image.height - uvSafeOffset,
+            resolution
+          );
           if (this._createCanvas) {
             this._renderer.texture.initSource(texture.source);
+            CanvasPool.returnCanvasAndContext(canvasAndContext);
           }
           BigPool.return(htmlTextData);
           return texture;
@@ -23472,7 +24433,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/text-html/init.mjs
-  var init_init10 = __esm({
+  var init_init11 = __esm({
     "../core/node_modules/pixi.js/lib/scene/text-html/init.mjs"() {
       init_Extensions();
       init_HTMLTextPipe();
@@ -23487,7 +24448,7 @@ ${parts.join("\n")}
   var init_MeshGeometry = __esm({
     "../core/node_modules/pixi.js/lib/scene/mesh/shared/MeshGeometry.mjs"() {
       init_Buffer();
-      init_const3();
+      init_const4();
       init_Geometry();
       init_deprecation();
       _MeshGeometry = class _MeshGeometry2 extends Geometry {
@@ -23954,6 +24915,7 @@ ${parts.join("\n")}
   var init_TilingSpritePipe = __esm({
     "../core/node_modules/pixi.js/lib/scene/sprite-tiling/TilingSpritePipe.mjs"() {
       init_Extensions();
+      init_getAdjustedBlendModeBlend();
       init_State();
       init_types2();
       init_colorToUniform();
@@ -23966,8 +24928,11 @@ ${parts.join("\n")}
       sharedQuad = new QuadGeometry();
       TilingSpritePipe = class {
         constructor(renderer) {
+          this._state = State.default2d;
           this._tilingSpriteDataHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_tilingSpriteDataHash");
         }
         validateRenderable(renderable) {
           const tilingSpriteData = this._getTilingSpriteData(renderable);
@@ -23976,8 +24941,8 @@ ${parts.join("\n")}
           const canBatch = tilingSpriteData.canBatch;
           if (canBatch && canBatch === couldBatch) {
             const { batchableMesh } = tilingSpriteData;
-            if (batchableMesh.texture._source !== renderable.texture._source) {
-              return !batchableMesh.batcher.checkAndUpdateTexture(batchableMesh, renderable.texture);
+            if (batchableMesh && batchableMesh.texture._source !== renderable.texture._source) {
+              return !batchableMesh._batcher.checkAndUpdateTexture(batchableMesh, renderable.texture);
             }
           }
           return couldBatch !== canBatch;
@@ -23990,15 +24955,15 @@ ${parts.join("\n")}
           if (canBatch) {
             tilingSpriteData.batchableMesh || (tilingSpriteData.batchableMesh = new BatchableMesh());
             const batchableMesh = tilingSpriteData.batchableMesh;
-            if (tilingSprite._didTilingSpriteUpdate) {
-              tilingSprite._didTilingSpriteUpdate = false;
+            if (tilingSprite.didViewUpdate) {
               this._updateBatchableMesh(tilingSprite);
               batchableMesh.geometry = geometry;
-              batchableMesh.mesh = tilingSprite;
+              batchableMesh.renderable = tilingSprite;
+              batchableMesh.transform = tilingSprite.groupTransform;
               batchableMesh.texture = tilingSprite._texture;
             }
             batchableMesh.roundPixels = this._renderer._roundPixels | tilingSprite._roundPixels;
-            batcher.addToBatch(batchableMesh);
+            batcher.addToBatch(batchableMesh, instructionSet);
           } else {
             batcher.break(instructionSet);
             tilingSpriteData.shader || (tilingSpriteData.shader = new TilingSpriteShader());
@@ -24017,10 +24982,11 @@ ${parts.join("\n")}
             localUniforms.uColor,
             0
           );
+          this._state.blendMode = getAdjustedBlendModeBlend(tilingSprite.groupBlendMode, tilingSprite.texture._source);
           this._renderer.encoder.draw({
             geometry: sharedQuad,
             shader,
-            state: State.default2d
+            state: this._state
           });
         }
         updateRenderable(tilingSprite) {
@@ -24028,10 +24994,10 @@ ${parts.join("\n")}
           const { canBatch } = tilingSpriteData;
           if (canBatch) {
             const { batchableMesh } = tilingSpriteData;
-            if (tilingSprite._didTilingSpriteUpdate)
+            if (tilingSprite.didViewUpdate)
               this._updateBatchableMesh(tilingSprite);
-            batchableMesh.batcher.updateElement(batchableMesh);
-          } else if (tilingSprite._didTilingSpriteUpdate) {
+            batchableMesh._batcher.updateElement(batchableMesh);
+          } else if (tilingSprite.didViewUpdate) {
             const { shader } = tilingSpriteData;
             shader.updateUniforms(
               tilingSprite.width,
@@ -24042,13 +25008,13 @@ ${parts.join("\n")}
               tilingSprite.texture
             );
           }
-          tilingSprite._didTilingSpriteUpdate = false;
         }
         destroyRenderable(tilingSprite) {
           const tilingSpriteData = this._getTilingSpriteData(tilingSprite);
           tilingSpriteData.batchableMesh = null;
           tilingSpriteData.shader?.destroy();
           this._tilingSpriteDataHash[tilingSprite.uid] = null;
+          tilingSprite.off("destroyed", this._destroyRenderableBound);
         }
         _getTilingSpriteData(renderable) {
           return this._tilingSpriteDataHash[renderable.uid] || this._initTilingSpriteData(renderable);
@@ -24064,9 +25030,7 @@ ${parts.join("\n")}
             renderable: tilingSprite,
             geometry
           };
-          tilingSprite.on("destroyed", () => {
-            this.destroyRenderable(tilingSprite);
-          });
+          tilingSprite.on("destroyed", this._destroyRenderableBound);
           return this._tilingSpriteDataHash[tilingSprite.uid];
         }
         _updateBatchableMesh(tilingSprite) {
@@ -24110,7 +25074,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/sprite-tiling/init.mjs
-  var init_init11 = __esm({
+  var init_init12 = __esm({
     "../core/node_modules/pixi.js/lib/scene/sprite-tiling/init.mjs"() {
       init_Extensions();
       init_TilingSpritePipe();
@@ -24295,35 +25259,38 @@ ${parts.join("\n")}
       NineSliceSpritePipe = class {
         constructor(renderer) {
           this._gpuSpriteHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_gpuSpriteHash");
         }
-        addRenderable(sprite, _instructionSet) {
+        addRenderable(sprite, instructionSet) {
           const gpuSprite = this._getGpuSprite(sprite);
-          if (sprite._didSpriteUpdate)
+          if (sprite.didViewUpdate)
             this._updateBatchableSprite(sprite, gpuSprite);
-          this._renderer.renderPipes.batch.addToBatch(gpuSprite);
+          this._renderer.renderPipes.batch.addToBatch(gpuSprite, instructionSet);
         }
         updateRenderable(sprite) {
           const gpuSprite = this._gpuSpriteHash[sprite.uid];
-          if (sprite._didSpriteUpdate)
+          if (sprite.didViewUpdate)
             this._updateBatchableSprite(sprite, gpuSprite);
-          gpuSprite.batcher.updateElement(gpuSprite);
+          gpuSprite._batcher.updateElement(gpuSprite);
         }
         validateRenderable(sprite) {
           const texture = sprite._texture;
           const gpuSprite = this._getGpuSprite(sprite);
           if (gpuSprite.texture._source !== texture._source) {
-            return !gpuSprite.batcher.checkAndUpdateTexture(gpuSprite, texture);
+            return !gpuSprite._batcher.checkAndUpdateTexture(gpuSprite, texture);
           }
           return false;
         }
         destroyRenderable(sprite) {
-          const batchableSprite = this._gpuSpriteHash[sprite.uid];
-          BigPool.return(batchableSprite);
+          const batchableMesh = this._gpuSpriteHash[sprite.uid];
+          BigPool.return(batchableMesh.geometry);
+          BigPool.return(batchableMesh);
           this._gpuSpriteHash[sprite.uid] = null;
+          sprite.off("destroyed", this._destroyRenderableBound);
         }
         _updateBatchableSprite(sprite, batchableSprite) {
-          sprite._didSpriteUpdate = false;
           batchableSprite.geometry.update(sprite);
           batchableSprite.texture = sprite._texture;
         }
@@ -24331,15 +25298,17 @@ ${parts.join("\n")}
           return this._gpuSpriteHash[sprite.uid] || this._initGPUSprite(sprite);
         }
         _initGPUSprite(sprite) {
-          const batchableMesh = new BatchableMesh();
-          batchableMesh.geometry = new NineSliceGeometry();
-          batchableMesh.mesh = sprite;
+          const batchableMesh = BigPool.get(BatchableMesh);
+          batchableMesh.geometry = BigPool.get(NineSliceGeometry);
+          batchableMesh.renderable = sprite;
+          batchableMesh.transform = sprite.groupTransform;
           batchableMesh.texture = sprite._texture;
           batchableMesh.roundPixels = this._renderer._roundPixels | sprite._roundPixels;
           this._gpuSpriteHash[sprite.uid] = batchableMesh;
-          sprite.on("destroyed", () => {
-            this.destroyRenderable(sprite);
-          });
+          if (!sprite.didViewUpdate) {
+            this._updateBatchableSprite(sprite, batchableMesh);
+          }
+          sprite.on("destroyed", this._destroyRenderableBound);
           return batchableMesh;
         }
         destroy() {
@@ -24363,7 +25332,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/sprite-nine-slice/init.mjs
-  var init_init12 = __esm({
+  var init_init13 = __esm({
     "../core/node_modules/pixi.js/lib/scene/sprite-nine-slice/init.mjs"() {
       init_Extensions();
       init_NineSliceSpritePipe();
@@ -24535,7 +25504,6 @@ ${parts.join("\n")}
         attributes: {
           aPosition: {
             buffer: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
-            location: 0,
             format: "float32x2",
             stride: 2 * 4,
             offset: 0
@@ -24587,22 +25555,24 @@ ${parts.join("\n")}
           } else {
             getFastGlobalBounds(instruction.container, bounds);
           }
-          const colorTextureSource = renderer.renderTarget.rootRenderTarget.colorTexture.source;
-          let resolution = colorTextureSource._resolution;
+          const colorTextureSource = renderer.renderTarget.renderTarget.colorTexture.source;
+          let resolution = Infinity;
           let padding = 0;
-          let antialias = colorTextureSource.antialias;
+          let antialias = true;
           let blendRequired = false;
           let enabled = false;
+          let clipToViewport = true;
           for (let i2 = 0; i2 < filters.length; i2++) {
             const filter2 = filters[i2];
-            resolution = Math.min(resolution, filter2.resolution);
+            resolution = Math.min(resolution, filter2.resolution === "inherit" ? colorTextureSource._resolution : filter2.resolution);
             padding += filter2.padding;
-            if (filter2.antialias !== "inherit") {
-              if (filter2.antialias === "on") {
-                antialias = true;
-              } else {
-                antialias = false;
-              }
+            if (filter2.antialias === "off") {
+              antialias = false;
+            } else if (filter2.antialias === "inherit") {
+              antialias && (antialias = colorTextureSource.antialias);
+            }
+            if (!filter2.clipToViewport) {
+              clipToViewport = false;
             }
             const isCompatible = !!(filter2.compatibleRenderers & renderer.type);
             if (!isCompatible) {
@@ -24621,8 +25591,12 @@ ${parts.join("\n")}
             filterData.skip = true;
             return;
           }
-          const viewPort = renderer.renderTarget.rootViewPort;
-          bounds.scale(resolution).fitBounds(0, viewPort.width, 0, viewPort.height).scale(1 / resolution).pad(padding).ceil();
+          bounds.scale(resolution);
+          if (clipToViewport) {
+            const viewPort = renderer.renderTarget.rootViewPort;
+            bounds.fitBounds(0, viewPort.width, 0, viewPort.height);
+          }
+          bounds.ceil().scale(1 / resolution).pad(padding | 0);
           if (!bounds.isPositive) {
             filterData.skip = true;
             return;
@@ -24860,7 +25834,7 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/filters/init.mjs
-  var init_init13 = __esm({
+  var init_init14 = __esm({
     "../core/node_modules/pixi.js/lib/filters/init.mjs"() {
       init_Extensions();
       init_FilterPipe();
@@ -24887,6 +25861,7 @@ ${parts.join("\n")}
       init_init11();
       init_init12();
       init_init13();
+      init_init14();
     }
   });
 
@@ -24905,6 +25880,7 @@ ${parts.join("\n")}
       init_init11();
       init_init12();
       init_init13();
+      init_init14();
     }
   });
 
@@ -24925,6 +25901,7 @@ ${parts.join("\n")}
           super(options);
           this.enabled = true;
           this._state = State.for2d();
+          this.blendMode = options.blendMode;
           this.padding = options.padding;
           if (typeof options.antialias === "boolean") {
             this.antialias = options.antialias ? "on" : "off";
@@ -24933,6 +25910,7 @@ ${parts.join("\n")}
           }
           this.resolution = options.resolution;
           this.blendRequired = options.blendRequired;
+          this.clipToViewport = options.clipToViewport;
           this.addResource("uTexture", 0, 1);
         }
         /**
@@ -24983,7 +25961,8 @@ ${parts.join("\n")}
         resolution: 1,
         padding: 0,
         antialias: "off",
-        blendRequired: false
+        blendRequired: false,
+        clipToViewport: true
       };
       Filter = _Filter;
     }
@@ -25247,8 +26226,12 @@ ${parts.join("\n")}
          * @param resolution - The resolution / device pixel ratio of the renderer.
          */
         resize(desiredScreenWidth, desiredScreenHeight, resolution) {
+          const previousResolution = this.view.resolution;
           this.view.resize(desiredScreenWidth, desiredScreenHeight, resolution);
-          this.emit("resize", this.view.screen.width, this.view.screen.height);
+          this.emit("resize", this.view.screen.width, this.view.screen.height, this.view.resolution);
+          if (resolution !== void 0 && resolution !== previousResolution) {
+            this.runners.resolutionChange.emit(resolution);
+          }
         }
         clear(options = {}) {
           const renderer = this;
@@ -25392,7 +26375,7 @@ ${parts.join("\n")}
           return !!this._roundPixels;
         }
         /**
-         * Overrideable function by `pixi.js/unsafe-eval` to silence
+         * Overridable function by `pixi.js/unsafe-eval` to silence
          * throwing an error if platform doesn't support unsafe-evals.
          * @private
          * @ignore
@@ -25448,6 +26431,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/scene/graphics/gpu/GpuGraphicsAdaptor.mjs"() {
       init_Extensions();
       init_Matrix();
+      init_maxRecommendedTextures();
       init_getTextureBatchBindGroup();
       init_compileHighShaderToProgram();
       init_colorBit();
@@ -25456,7 +26440,6 @@ ${parts.join("\n")}
       init_roundPixelsBit();
       init_Shader();
       init_UniformGroup();
-      init_maxRecommendedTextures();
       GpuGraphicsAdaptor = class {
         init() {
           const localUniforms = new UniformGroup({
@@ -25468,7 +26451,7 @@ ${parts.join("\n")}
             name: "graphics",
             bits: [
               colorBit,
-              generateTextureBatchBit(maxRecommendedTextures()),
+              generateTextureBatchBit(getMaxTexturesPerBatch()),
               localUniformBitGroup2,
               roundPixelsBit
             ]
@@ -25487,16 +26470,16 @@ ${parts.join("\n")}
           const renderer = graphicsPipe.renderer;
           const contextSystem = renderer.graphicsContext;
           const {
-            geometry,
+            batcher,
             instructions
           } = contextSystem.getContextRenderData(context4);
           const encoder = renderer.encoder;
           encoder.setPipelineFromGeometryProgramAndState(
-            geometry,
+            batcher.geometry,
             shader.gpuProgram,
             graphicsPipe.state
           );
-          encoder.setGeometry(geometry);
+          encoder.setGeometry(batcher.geometry, shader.gpuProgram);
           const globalUniformsBindGroup = renderer.globalUniforms.bindGroup;
           encoder.setBindGroup(0, globalUniformsBindGroup, shader.gpuProgram);
           const localBindGroup = renderer.renderPipes.uniformBatch.getUniformBindGroup(shader.resources.localUniforms, true);
@@ -25651,9 +26634,7 @@ ${parts.join("\n")}
           let shader = mesh._shader;
           if (!shader) {
             shader = this._shader;
-            shader.resources.uTexture = mesh.texture.source;
-            shader.resources.uSampler = mesh.texture.source.style;
-            shader.resources.textureUniforms.uniforms.uTextureMatrix = mesh.texture.textureMatrix.mapCoord;
+            shader.groups[2] = renderer.texture.getTextureBindGroup(mesh.texture);
           } else if (!shader.gpuProgram) {
             warn("Mesh shader has no gpuProgram", mesh.shader);
             return;
@@ -25691,38 +26672,17 @@ ${parts.join("\n")}
   var init_GpuBatchAdaptor = __esm({
     "../core/node_modules/pixi.js/lib/rendering/batcher/gpu/GpuBatchAdaptor.mjs"() {
       init_Extensions();
-      init_compileHighShaderToProgram();
-      init_colorBit();
-      init_generateTextureBatchBit();
-      init_roundPixelsBit();
-      init_Shader();
       init_State();
-      init_maxRecommendedTextures();
       init_getTextureBatchBindGroup();
       tempState = State.for2d();
       GpuBatchAdaptor = class {
-        init() {
-          const gpuProgram3 = compileHighShaderGpuProgram({
-            name: "batch",
-            bits: [
-              colorBit,
-              generateTextureBatchBit(maxRecommendedTextures()),
-              roundPixelsBit
-            ]
-          });
-          this._shader = new Shader({
-            gpuProgram: gpuProgram3,
-            groups: {
-              // these will be dynamically allocated
-            }
-          });
-        }
-        start(batchPipe, geometry) {
+        start(batchPipe, geometry, shader) {
           const renderer = batchPipe.renderer;
           const encoder = renderer.encoder;
-          const program = this._shader.gpuProgram;
+          const program = shader.gpuProgram;
+          this._shader = shader;
           this._geometry = geometry;
-          encoder.setGeometry(geometry);
+          encoder.setGeometry(geometry, program);
           tempState.blendMode = "normal";
           renderer.pipeline.getPipeline(
             geometry,
@@ -25757,10 +26717,6 @@ ${parts.join("\n")}
           encoder.renderPassEncoder.setBindGroup(1, gpuBindGroup);
           encoder.renderPassEncoder.drawIndexed(batch.size, 1, batch.start);
         }
-        destroy() {
-          this._shader.destroy(true);
-          this._shader = null;
-        }
       };
       GpuBatchAdaptor.extension = {
         type: [
@@ -25779,6 +26735,13 @@ ${parts.join("\n")}
       CustomRenderPipe = class {
         constructor(renderer) {
           this._renderer = renderer;
+        }
+        updateRenderable() {
+        }
+        destroyRenderable() {
+        }
+        validateRenderable() {
+          return false;
         }
         addRenderable(container, instructionSet) {
           this._renderer.renderPipes.batch.break(instructionSet);
@@ -25859,48 +26822,55 @@ ${parts.join("\n")}
   });
 
   // ../core/node_modules/pixi.js/lib/scene/container/utils/buildInstructions.mjs
-  function buildInstructions(renderGroup, renderPipes3) {
+  function buildInstructions(renderGroup, rendererOrPipes) {
     const root = renderGroup.root;
     const instructionSet = renderGroup.instructionSet;
     instructionSet.reset();
+    const renderer = rendererOrPipes.renderPipes ? rendererOrPipes : rendererOrPipes.batch.renderer;
+    const renderPipes3 = renderer.renderPipes;
     renderPipes3.batch.buildStart(instructionSet);
     renderPipes3.blendMode.buildStart();
     renderPipes3.colorMask.buildStart();
     if (root.sortableChildren) {
       root.sortChildren();
     }
-    collectAllRenderablesAdvanced(root, instructionSet, renderPipes3, true);
+    collectAllRenderablesAdvanced(root, instructionSet, renderer, true);
     renderPipes3.batch.buildEnd(instructionSet);
     renderPipes3.blendMode.buildEnd(instructionSet);
   }
-  function collectAllRenderables(container, instructionSet, rendererPipes) {
+  function collectAllRenderables(container, instructionSet, rendererOrPipes) {
+    const renderer = rendererOrPipes.renderPipes ? rendererOrPipes : rendererOrPipes.batch.renderer;
     if (container.globalDisplayStatus < 7 || !container.includeInBuild)
       return;
     if (container.sortableChildren) {
       container.sortChildren();
     }
     if (container.isSimple) {
-      collectAllRenderablesSimple(container, instructionSet, rendererPipes);
+      collectAllRenderablesSimple(container, instructionSet, renderer);
     } else {
-      collectAllRenderablesAdvanced(container, instructionSet, rendererPipes, false);
+      collectAllRenderablesAdvanced(container, instructionSet, renderer, false);
     }
   }
-  function collectAllRenderablesSimple(container, instructionSet, renderPipes3) {
+  function collectAllRenderablesSimple(container, instructionSet, renderer) {
     if (container.renderPipeId) {
-      renderPipes3.blendMode.setBlendMode(container, container.groupBlendMode, instructionSet);
-      container.didViewUpdate = false;
+      const renderable = container;
+      const { renderPipes: renderPipes3, renderableGC } = renderer;
+      renderPipes3.blendMode.setBlendMode(renderable, container.groupBlendMode, instructionSet);
       const rp = renderPipes3;
-      rp[container.renderPipeId].addRenderable(container, instructionSet);
+      rp[renderable.renderPipeId].addRenderable(renderable, instructionSet);
+      renderableGC.addRenderable(renderable, instructionSet);
+      renderable.didViewUpdate = false;
     }
     if (!container.renderGroup) {
       const children2 = container.children;
       const length = children2.length;
       for (let i2 = 0; i2 < length; i2++) {
-        collectAllRenderables(children2[i2], instructionSet, renderPipes3);
+        collectAllRenderables(children2[i2], instructionSet, renderer);
       }
     }
   }
-  function collectAllRenderablesAdvanced(container, instructionSet, renderPipes3, isRoot) {
+  function collectAllRenderablesAdvanced(container, instructionSet, renderer, isRoot) {
+    const { renderPipes: renderPipes3, renderableGC } = renderer;
     if (!isRoot && container.renderGroup) {
       renderPipes3.renderGroup.addRenderGroup(container.renderGroup, instructionSet);
     } else {
@@ -25909,17 +26879,19 @@ ${parts.join("\n")}
         const pipe = renderPipes3[effect.pipe];
         pipe.push(effect, container, instructionSet);
       }
-      const renderPipeId = container.renderPipeId;
+      const renderable = container;
+      const renderPipeId = renderable.renderPipeId;
       if (renderPipeId) {
-        renderPipes3.blendMode.setBlendMode(container, container.groupBlendMode, instructionSet);
-        container.didViewUpdate = false;
+        renderPipes3.blendMode.setBlendMode(renderable, renderable.groupBlendMode, instructionSet);
         const pipe = renderPipes3[renderPipeId];
-        pipe.addRenderable(container, instructionSet);
+        pipe.addRenderable(renderable, instructionSet);
+        renderableGC.addRenderable(renderable, instructionSet);
+        renderable.didViewUpdate = false;
       }
       const children2 = container.children;
       if (children2.length) {
         for (let i2 = 0; i2 < children2.length; i2++) {
-          collectAllRenderables(children2[i2], instructionSet, renderPipes3);
+          collectAllRenderables(children2[i2], instructionSet, renderer);
         }
       }
       for (let i2 = container.effects.length - 1; i2 >= 0; i2--) {
@@ -25931,6 +26903,23 @@ ${parts.join("\n")}
   }
   var init_buildInstructions = __esm({
     "../core/node_modules/pixi.js/lib/scene/container/utils/buildInstructions.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/scene/container/utils/clearList.mjs
+  function clearList(list, index) {
+    index || (index = 0);
+    for (let j2 = index; j2 < list.length; j2++) {
+      if (list[j2]) {
+        list[j2] = null;
+      } else {
+        break;
+      }
+    }
+  }
+  var init_clearList = __esm({
+    "../core/node_modules/pixi.js/lib/scene/container/utils/clearList.mjs"() {
       "use strict";
     }
   });
@@ -25989,15 +26978,17 @@ ${parts.join("\n")}
     const childrenToUpdate = renderGroup.childrenToUpdate;
     const updateTick = renderGroup.updateTick++;
     for (const j2 in childrenToUpdate) {
+      const renderGroupDepth = Number(j2);
       const childrenAtDepth = childrenToUpdate[j2];
       const list = childrenAtDepth.list;
       const index = childrenAtDepth.index;
       for (let i2 = 0; i2 < index; i2++) {
         const child = list[i2];
-        if (child.parentRenderGroup === renderGroup) {
+        if (child.parentRenderGroup === renderGroup && child.relativeRenderGroupDepth === renderGroupDepth) {
           updateTransformAndChildren(child, updateTick, 0);
         }
       }
+      clearList(list, index);
       childrenAtDepth.index = 0;
     }
     if (updateChildRenderGroups) {
@@ -26043,13 +27034,13 @@ ${parts.join("\n")}
         localTransform,
         parent.relativeGroupTransform
       );
-      if (updateFlags) {
+      if (updateFlags & UPDATE_BLEND_COLOR_VISIBLE) {
         updateColorBlendVisibility(container, parent, updateFlags);
       }
     } else {
       updateFlags = container._updateFlags;
       container.relativeGroupTransform.copyFrom(localTransform);
-      if (updateFlags) {
+      if (updateFlags & UPDATE_BLEND_COLOR_VISIBLE) {
         updateColorBlendVisibility(container, tempContainer, updateFlags);
       }
     }
@@ -26060,8 +27051,9 @@ ${parts.join("\n")}
         updateTransformAndChildren(children2[i2], updateTick, updateFlags);
       }
       const renderGroup = container.parentRenderGroup;
-      if (container.renderPipeId && !renderGroup.structureDidChange) {
-        renderGroup.updateRenderable(container);
+      const renderable = container;
+      if (renderable.renderPipeId && !renderGroup.structureDidChange) {
+        renderGroup.updateRenderable(renderable);
       }
     }
   }
@@ -26084,12 +27076,14 @@ ${parts.join("\n")}
     }
     container._updateFlags = 0;
   }
-  var tempContainer;
+  var tempContainer, UPDATE_BLEND_COLOR_VISIBLE;
   var init_updateRenderGroupTransforms = __esm({
     "../core/node_modules/pixi.js/lib/scene/container/utils/updateRenderGroupTransforms.mjs"() {
       init_Container();
+      init_clearList();
       init_mixColors();
       tempContainer = new Container();
+      UPDATE_BLEND_COLOR_VISIBLE = UPDATE_VISIBLE | UPDATE_COLOR | UPDATE_BLEND;
     }
   });
 
@@ -26124,6 +27118,7 @@ ${parts.join("\n")}
         renderGroup.updateRenderable(container);
       }
     }
+    clearList(list, index);
   }
   var tempMatrix5, RenderGroupSystem;
   var init_RenderGroupSystem = __esm({
@@ -26131,6 +27126,7 @@ ${parts.join("\n")}
       init_Extensions();
       init_Matrix();
       init_buildInstructions();
+      init_clearList();
       init_collectRenderGroups();
       init_executeInstructions();
       init_updateRenderGroupTransforms();
@@ -26160,11 +27156,13 @@ ${parts.join("\n")}
             renderGroup.instructionSet.renderPipes = renderPipes3;
             if (!renderGroup.structureDidChange) {
               validateRenderables(renderGroup, renderPipes3);
+            } else {
+              clearList(renderGroup.childrenRenderablesToUpdate.list, 0);
             }
             updateRenderGroupTransforms(renderGroup);
             if (renderGroup.structureDidChange) {
               renderGroup.structureDidChange = false;
-              buildInstructions(renderGroup, renderPipes3);
+              buildInstructions(renderGroup, renderer);
             } else {
               updateRenderables(renderGroup);
             }
@@ -26210,25 +27208,27 @@ ${parts.join("\n")}
       SpritePipe = class {
         constructor(renderer) {
           this._gpuSpriteHash = /* @__PURE__ */ Object.create(null);
+          this._destroyRenderableBound = this.destroyRenderable.bind(this);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_gpuSpriteHash");
         }
-        addRenderable(sprite, _instructionSet) {
+        addRenderable(sprite, instructionSet) {
           const gpuSprite = this._getGpuSprite(sprite);
-          if (sprite._didSpriteUpdate)
+          if (sprite.didViewUpdate)
             this._updateBatchableSprite(sprite, gpuSprite);
-          this._renderer.renderPipes.batch.addToBatch(gpuSprite);
+          this._renderer.renderPipes.batch.addToBatch(gpuSprite, instructionSet);
         }
         updateRenderable(sprite) {
           const gpuSprite = this._gpuSpriteHash[sprite.uid];
-          if (sprite._didSpriteUpdate)
+          if (sprite.didViewUpdate)
             this._updateBatchableSprite(sprite, gpuSprite);
-          gpuSprite.batcher.updateElement(gpuSprite);
+          gpuSprite._batcher.updateElement(gpuSprite);
         }
         validateRenderable(sprite) {
           const texture = sprite._texture;
           const gpuSprite = this._getGpuSprite(sprite);
           if (gpuSprite.texture._source !== texture._source) {
-            return !gpuSprite.batcher.checkAndUpdateTexture(gpuSprite, texture);
+            return !gpuSprite._batcher.checkAndUpdateTexture(gpuSprite, texture);
           }
           return false;
         }
@@ -26236,9 +27236,9 @@ ${parts.join("\n")}
           const batchableSprite = this._gpuSpriteHash[sprite.uid];
           BigPool.return(batchableSprite);
           this._gpuSpriteHash[sprite.uid] = null;
+          sprite.off("destroyed", this._destroyRenderableBound);
         }
         _updateBatchableSprite(sprite, batchableSprite) {
-          sprite._didSpriteUpdate = false;
           batchableSprite.bounds = sprite.bounds;
           batchableSprite.texture = sprite._texture;
         }
@@ -26248,14 +27248,12 @@ ${parts.join("\n")}
         _initGPUSprite(sprite) {
           const batchableSprite = BigPool.get(BatchableSprite);
           batchableSprite.renderable = sprite;
+          batchableSprite.transform = sprite.groupTransform;
           batchableSprite.texture = sprite._texture;
           batchableSprite.bounds = sprite.bounds;
           batchableSprite.roundPixels = this._renderer._roundPixels | sprite._roundPixels;
           this._gpuSpriteHash[sprite.uid] = batchableSprite;
-          sprite._didSpriteUpdate = false;
-          sprite.on("destroyed", () => {
-            this.destroyRenderable(sprite);
-          });
+          sprite.on("destroyed", this._destroyRenderableBound);
           return batchableSprite;
         }
         destroy() {
@@ -26277,78 +27275,138 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/pixi.js/lib/utils/const.mjs
+  var VERSION2;
+  var init_const8 = __esm({
+    "../core/node_modules/pixi.js/lib/utils/const.mjs"() {
+      init_eventemitter3();
+      VERSION2 = "8.5.2";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/utils/global/globalHooks.mjs
+  var ApplicationInitHook, RendererInitHook;
+  var init_globalHooks = __esm({
+    "../core/node_modules/pixi.js/lib/utils/global/globalHooks.mjs"() {
+      init_Extensions();
+      init_const8();
+      ApplicationInitHook = class {
+        static init() {
+          globalThis.__PIXI_APP_INIT__?.(this, VERSION2);
+        }
+        static destroy() {
+        }
+      };
+      ApplicationInitHook.extension = ExtensionType.Application;
+      RendererInitHook = class {
+        constructor(renderer) {
+          this._renderer = renderer;
+        }
+        init() {
+          globalThis.__PIXI_RENDERER_INIT__?.(this._renderer, VERSION2);
+        }
+        destroy() {
+          this._renderer = null;
+        }
+      };
+      RendererInitHook.extension = {
+        type: [
+          ExtensionType.WebGLSystem,
+          ExtensionType.WebGPUSystem
+        ],
+        name: "initHook",
+        priority: -10
+      };
+    }
+  });
+
   // ../core/node_modules/pixi.js/lib/rendering/batcher/shared/BatcherPipe.mjs
-  var BatcherPipe;
+  var _BatcherPipe, BatcherPipe;
   var init_BatcherPipe = __esm({
     "../core/node_modules/pixi.js/lib/rendering/batcher/shared/BatcherPipe.mjs"() {
       init_Extensions();
       init_State();
-      init_BatchGeometry();
-      init_Batcher();
-      BatcherPipe = class {
+      init_DefaultBatcher();
+      _BatcherPipe = class _BatcherPipe2 {
         constructor(renderer, adaptor) {
           this.state = State.for2d();
-          this._batches = /* @__PURE__ */ Object.create(null);
-          this._geometries = /* @__PURE__ */ Object.create(null);
+          this._batchersByInstructionSet = /* @__PURE__ */ Object.create(null);
+          this._activeBatches = /* @__PURE__ */ Object.create(null);
           this.renderer = renderer;
           this._adaptor = adaptor;
-          this._adaptor.init(this);
+          this._adaptor.init?.(this);
+        }
+        static getBatcher(name) {
+          return new this._availableBatchers[name]();
         }
         buildStart(instructionSet) {
-          if (!this._batches[instructionSet.uid]) {
-            const batcher = new Batcher();
-            this._batches[instructionSet.uid] = batcher;
-            this._geometries[batcher.uid] = new BatchGeometry();
+          let batchers = this._batchersByInstructionSet[instructionSet.uid];
+          if (!batchers) {
+            batchers = this._batchersByInstructionSet[instructionSet.uid] = /* @__PURE__ */ Object.create(null);
+            batchers.default || (batchers.default = new DefaultBatcher());
           }
-          this._activeBatch = this._batches[instructionSet.uid];
-          this._activeGeometry = this._geometries[this._activeBatch.uid];
-          this._activeBatch.begin();
+          this._activeBatches = batchers;
+          this._activeBatch = this._activeBatches.default;
+          for (const i2 in this._activeBatches) {
+            this._activeBatches[i2].begin();
+          }
         }
-        addToBatch(batchableObject) {
+        addToBatch(batchableObject, instructionSet) {
+          if (this._activeBatch.name !== batchableObject.batcherName) {
+            this._activeBatch.break(instructionSet);
+            let batch = this._activeBatches[batchableObject.batcherName];
+            if (!batch) {
+              batch = this._activeBatches[batchableObject.batcherName] = _BatcherPipe2.getBatcher(batchableObject.batcherName);
+              batch.begin();
+            }
+            this._activeBatch = batch;
+          }
           this._activeBatch.add(batchableObject);
         }
         break(instructionSet) {
           this._activeBatch.break(instructionSet);
         }
         buildEnd(instructionSet) {
-          const activeBatch = this._activeBatch;
-          const geometry = this._activeGeometry;
-          activeBatch.finish(instructionSet);
-          geometry.indexBuffer.setDataWithSize(activeBatch.indexBuffer, activeBatch.indexSize, true);
-          geometry.buffers[0].setDataWithSize(activeBatch.attributeBuffer.float32View, activeBatch.attributeSize, false);
+          this._activeBatch.break(instructionSet);
+          const batches = this._activeBatches;
+          for (const i2 in batches) {
+            const batch = batches[i2];
+            const geometry = batch.geometry;
+            geometry.indexBuffer.setDataWithSize(batch.indexBuffer, batch.indexSize, true);
+            geometry.buffers[0].setDataWithSize(batch.attributeBuffer.float32View, batch.attributeSize, false);
+          }
         }
         upload(instructionSet) {
-          const batcher = this._batches[instructionSet.uid];
-          const geometry = this._geometries[batcher.uid];
-          if (batcher.dirty) {
-            batcher.dirty = false;
-            geometry.buffers[0].update(batcher.attributeSize * 4);
+          const batchers = this._batchersByInstructionSet[instructionSet.uid];
+          for (const i2 in batchers) {
+            const batcher = batchers[i2];
+            const geometry = batcher.geometry;
+            if (batcher.dirty) {
+              batcher.dirty = false;
+              geometry.buffers[0].update(batcher.attributeSize * 4);
+            }
           }
         }
         execute(batch) {
           if (batch.action === "startBatch") {
             const batcher = batch.batcher;
-            const geometry = this._geometries[batcher.uid];
-            this._adaptor.start(this, geometry);
+            const geometry = batcher.geometry;
+            const shader = batcher.shader;
+            this._adaptor.start(this, geometry, shader);
           }
           this._adaptor.execute(this, batch);
         }
         destroy() {
           this.state = null;
           this.renderer = null;
-          this._adaptor.destroy();
           this._adaptor = null;
-          for (const i2 in this._batches) {
-            this._batches[i2].destroy();
+          for (const i2 in this._activeBatches) {
+            this._activeBatches[i2].destroy();
           }
-          this._batches = null;
-          for (const i2 in this._geometries) {
-            this._geometries[i2].destroy();
-          }
-          this._geometries = null;
+          this._activeBatches = null;
         }
       };
-      BatcherPipe.extension = {
+      _BatcherPipe.extension = {
         type: [
           ExtensionType.WebGLPipes,
           ExtensionType.WebGPUPipes,
@@ -26356,22 +27414,26 @@ ${parts.join("\n")}
         ],
         name: "batch"
       };
+      _BatcherPipe._availableBatchers = /* @__PURE__ */ Object.create(null);
+      BatcherPipe = _BatcherPipe;
+      extensions.handleByMap(ExtensionType.Batcher, BatcherPipe._availableBatchers);
+      extensions.add(DefaultBatcher);
     }
   });
 
   // ../core/node_modules/pixi.js/lib/filters/mask/mask.frag.mjs
-  var fragment;
+  var fragment2;
   var init_mask_frag = __esm({
     "../core/node_modules/pixi.js/lib/filters/mask/mask.frag.mjs"() {
-      fragment = "in vec2 vMaskCoord;\nin vec2 vTextureCoord;\n\nuniform sampler2D uTexture;\nuniform sampler2D uMaskTexture;\n\nuniform float uAlpha;\nuniform vec4 uMaskClamp;\n\nout vec4 finalColor;\n\nvoid main(void)\n{\n    float clip = step(3.5,\n        step(uMaskClamp.x, vMaskCoord.x) +\n        step(uMaskClamp.y, vMaskCoord.y) +\n        step(vMaskCoord.x, uMaskClamp.z) +\n        step(vMaskCoord.y, uMaskClamp.w));\n\n    // TODO look into why this is needed\n    float npmAlpha = uAlpha; \n    vec4 original = texture(uTexture, vTextureCoord);\n    vec4 masky = texture(uMaskTexture, vMaskCoord);\n    float alphaMul = 1.0 - npmAlpha * (1.0 - masky.a);\n\n    original *= (alphaMul * masky.r * uAlpha * clip);\n\n    finalColor = original;\n}\n";
+      fragment2 = "in vec2 vMaskCoord;\nin vec2 vTextureCoord;\n\nuniform sampler2D uTexture;\nuniform sampler2D uMaskTexture;\n\nuniform float uAlpha;\nuniform vec4 uMaskClamp;\nuniform float uInverse;\n\nout vec4 finalColor;\n\nvoid main(void)\n{\n    float clip = step(3.5,\n        step(uMaskClamp.x, vMaskCoord.x) +\n        step(uMaskClamp.y, vMaskCoord.y) +\n        step(vMaskCoord.x, uMaskClamp.z) +\n        step(vMaskCoord.y, uMaskClamp.w));\n\n    // TODO look into why this is needed\n    float npmAlpha = uAlpha;\n    vec4 original = texture(uTexture, vTextureCoord);\n    vec4 masky = texture(uMaskTexture, vMaskCoord);\n    float alphaMul = 1.0 - npmAlpha * (1.0 - masky.a);\n\n    float a = alphaMul * masky.r * npmAlpha * clip;\n\n    if (uInverse == 1.0) {\n        a = 1.0 - a;\n    }\n\n    finalColor = original * a;\n}\n";
     }
   });
 
   // ../core/node_modules/pixi.js/lib/filters/mask/mask.vert.mjs
-  var vertex;
+  var vertex2;
   var init_mask_vert = __esm({
     "../core/node_modules/pixi.js/lib/filters/mask/mask.vert.mjs"() {
-      vertex = "in vec2 aPosition;\n\nout vec2 vTextureCoord;\nout vec2 vMaskCoord;\n\n\nuniform vec4 uInputSize;\nuniform vec4 uOutputFrame;\nuniform vec4 uOutputTexture;\nuniform mat3 uFilterMatrix;\n\nvec4 filterVertexPosition(  vec2 aPosition )\n{\n    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;\n       \n    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nvec2 filterTextureCoord(  vec2 aPosition )\n{\n    return aPosition * (uOutputFrame.zw * uInputSize.zw);\n}\n\nvec2 getFilterCoord( vec2 aPosition )\n{\n    return  ( uFilterMatrix * vec3( filterTextureCoord(aPosition), 1.0)  ).xy;\n}   \n\nvoid main(void)\n{\n    gl_Position = filterVertexPosition(aPosition);\n    vTextureCoord = filterTextureCoord(aPosition);\n    vMaskCoord = getFilterCoord(aPosition);\n}\n";
+      vertex2 = "in vec2 aPosition;\n\nout vec2 vTextureCoord;\nout vec2 vMaskCoord;\n\n\nuniform vec4 uInputSize;\nuniform vec4 uOutputFrame;\nuniform vec4 uOutputTexture;\nuniform mat3 uFilterMatrix;\n\nvec4 filterVertexPosition(  vec2 aPosition )\n{\n    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;\n       \n    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nvec2 filterTextureCoord(  vec2 aPosition )\n{\n    return aPosition * (uOutputFrame.zw * uInputSize.zw);\n}\n\nvec2 getFilterCoord( vec2 aPosition )\n{\n    return  ( uFilterMatrix * vec3( filterTextureCoord(aPosition), 1.0)  ).xy;\n}   \n\nvoid main(void)\n{\n    gl_Position = filterVertexPosition(aPosition);\n    vTextureCoord = filterTextureCoord(aPosition);\n    vMaskCoord = getFilterCoord(aPosition);\n}\n";
     }
   });
 
@@ -26379,7 +27441,7 @@ ${parts.join("\n")}
   var source;
   var init_mask_wgsl = __esm({
     "../core/node_modules/pixi.js/lib/filters/mask/mask.wgsl.mjs"() {
-      source = "struct GlobalFilterUniforms {\n  uInputSize:vec4<f32>,\n  uInputPixel:vec4<f32>,\n  uInputClamp:vec4<f32>,\n  uOutputFrame:vec4<f32>,\n  uGlobalFrame:vec4<f32>,\n  uOutputTexture:vec4<f32>,  \n};\n\nstruct MaskUniforms {\n  uFilterMatrix:mat3x3<f32>,\n  uMaskClamp:vec4<f32>,\n  uAlpha:f32,\n};\n\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler : sampler;\n\n@group(1) @binding(0) var<uniform> filterUniforms : MaskUniforms;\n@group(1) @binding(1) var uMaskTexture: texture_2d<f32>;\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) uv : vec2<f32>,\n    @location(1) filterUv : vec2<f32>,\n  };\n\nfn filterVertexPosition(aPosition:vec2<f32>) -> vec4<f32>\n{\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\nfn globalTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return  (aPosition.xy / gfu.uGlobalFrame.zw) + (gfu.uGlobalFrame.xy / gfu.uGlobalFrame.zw);  \n}\n\nfn getFilterCoord(aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return ( filterUniforms.uFilterMatrix * vec3( filterTextureCoord(aPosition), 1.0)  ).xy;\n}\n\nfn getSize() -> vec2<f32>\n{\n\n  \n  return gfu.uGlobalFrame.zw;\n}\n  \n@vertex\nfn mainVertex(\n  @location(0) aPosition : vec2<f32>, \n) -> VSOutput {\n  return VSOutput(\n   filterVertexPosition(aPosition),\n   filterTextureCoord(aPosition),\n   getFilterCoord(aPosition)\n  );\n}\n\n@fragment\nfn mainFragment(\n  @location(0) uv: vec2<f32>,\n  @location(1) filterUv: vec2<f32>,\n  @builtin(position) position: vec4<f32>\n) -> @location(0) vec4<f32> {\n\n    var maskClamp = filterUniforms.uMaskClamp;\n\n     var clip = step(3.5,\n        step(maskClamp.x, filterUv.x) +\n        step(maskClamp.y, filterUv.y) +\n        step(filterUv.x, maskClamp.z) +\n        step(filterUv.y, maskClamp.w));\n\n    var mask = textureSample(uMaskTexture, uSampler, filterUv);\n    var source = textureSample(uTexture, uSampler, uv);\n    \n    var npmAlpha = 0.0;\n\n    var alphaMul = 1.0 - npmAlpha * (1.0 - mask.a);\n\n    var a = (alphaMul * mask.r) * clip;\n\n    return vec4(source.rgb, source.a) * a;\n}";
+      source = "struct GlobalFilterUniforms {\n  uInputSize:vec4<f32>,\n  uInputPixel:vec4<f32>,\n  uInputClamp:vec4<f32>,\n  uOutputFrame:vec4<f32>,\n  uGlobalFrame:vec4<f32>,\n  uOutputTexture:vec4<f32>,\n};\n\nstruct MaskUniforms {\n  uFilterMatrix:mat3x3<f32>,\n  uMaskClamp:vec4<f32>,\n  uAlpha:f32,\n  uInverse:f32,\n};\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler : sampler;\n\n@group(1) @binding(0) var<uniform> filterUniforms : MaskUniforms;\n@group(1) @binding(1) var uMaskTexture: texture_2d<f32>;\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) uv : vec2<f32>,\n    @location(1) filterUv : vec2<f32>,\n};\n\nfn filterVertexPosition(aPosition:vec2<f32>) -> vec4<f32>\n{\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\nfn globalTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return  (aPosition.xy / gfu.uGlobalFrame.zw) + (gfu.uGlobalFrame.xy / gfu.uGlobalFrame.zw);\n}\n\nfn getFilterCoord(aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return ( filterUniforms.uFilterMatrix * vec3( filterTextureCoord(aPosition), 1.0)  ).xy;\n}\n\nfn getSize() -> vec2<f32>\n{\n  return gfu.uGlobalFrame.zw;\n}\n\n@vertex\nfn mainVertex(\n  @location(0) aPosition : vec2<f32>,\n) -> VSOutput {\n  return VSOutput(\n   filterVertexPosition(aPosition),\n   filterTextureCoord(aPosition),\n   getFilterCoord(aPosition)\n  );\n}\n\n@fragment\nfn mainFragment(\n  @location(0) uv: vec2<f32>,\n  @location(1) filterUv: vec2<f32>,\n  @builtin(position) position: vec4<f32>\n) -> @location(0) vec4<f32> {\n\n    var maskClamp = filterUniforms.uMaskClamp;\n    var uAlpha = filterUniforms.uAlpha;\n\n    var clip = step(3.5,\n      step(maskClamp.x, filterUv.x) +\n      step(maskClamp.y, filterUv.y) +\n      step(filterUv.x, maskClamp.z) +\n      step(filterUv.y, maskClamp.w));\n\n    var mask = textureSample(uMaskTexture, uSampler, filterUv);\n    var source = textureSample(uTexture, uSampler, uv);\n    var alphaMul = 1.0 - uAlpha * (1.0 - mask.a);\n\n    var a: f32 = alphaMul * mask.r * uAlpha * clip;\n\n    if (filterUniforms.uInverse == 1.0) {\n        a = 1.0 - a;\n    }\n\n    return source * a;\n}\n";
     }
   });
 
@@ -26403,7 +27465,8 @@ ${parts.join("\n")}
           const filterUniforms = new UniformGroup({
             uFilterMatrix: { value: new Matrix(), type: "mat3x3<f32>" },
             uMaskClamp: { value: textureMatrix.uClampFrame, type: "vec4<f32>" },
-            uAlpha: { value: 1, type: "f32" }
+            uAlpha: { value: 1, type: "f32" },
+            uInverse: { value: options.inverse ? 1 : 0, type: "f32" }
           });
           const gpuProgram3 = GpuProgram.from({
             vertex: {
@@ -26416,8 +27479,8 @@ ${parts.join("\n")}
             }
           });
           const glProgram3 = GlProgram.from({
-            vertex,
-            fragment,
+            vertex: vertex2,
+            fragment: fragment2,
             name: "mask-filter"
           });
           super({
@@ -26431,6 +27494,12 @@ ${parts.join("\n")}
           });
           this.sprite = sprite;
           this._textureMatrix = textureMatrix;
+        }
+        set inverse(value) {
+          this.resources.filterUniforms.uniforms.uInverse = value ? 1 : 0;
+        }
+        get inverse() {
+          return this.resources.filterUniforms.uniforms.uInverse === 1;
         }
         apply(filterManager, input, output, clearMode) {
           this._textureMatrix.texture = this.sprite.texture;
@@ -26459,12 +27528,16 @@ ${parts.join("\n")}
       init_PoolGroup();
       init_Texture();
       init_TexturePool();
+      init_types2();
       tempBounds3 = new Bounds();
       AlphaMaskEffect = class extends FilterEffect {
         constructor() {
           super();
           this.filters = [new MaskFilter({
-            sprite: new Sprite(Texture.EMPTY)
+            sprite: new Sprite(Texture.EMPTY),
+            inverse: false,
+            resolution: "inherit",
+            antialias: "inherit"
           })];
         }
         get sprite() {
@@ -26472,6 +27545,12 @@ ${parts.join("\n")}
         }
         set sprite(value) {
           this.filters[0].sprite = value;
+        }
+        get inverse() {
+          return this.filters[0].inverse;
+        }
+        set inverse(value) {
+          this.filters[0].inverse = value;
         }
       };
       AlphaMaskPipe = class {
@@ -26486,16 +27565,18 @@ ${parts.join("\n")}
             renderPipeId: "alphaMask",
             action: "pushMaskBegin",
             mask,
+            inverse: maskedContainer._maskOptions.inverse,
             canBundle: false,
             maskedContainer
           });
+          mask.inverse = maskedContainer._maskOptions.inverse;
           if (mask.renderMaskToTexture) {
             const maskContainer = mask.mask;
             maskContainer.includeInBuild = true;
             collectAllRenderables(
               maskContainer,
               instructionSet,
-              renderer.renderPipes
+              renderer
             );
             maskContainer.includeInBuild = false;
           }
@@ -26505,6 +27586,7 @@ ${parts.join("\n")}
             action: "pushMaskEnd",
             mask,
             maskedContainer,
+            inverse: maskedContainer._maskOptions.inverse,
             canBundle: false
           });
         }
@@ -26515,6 +27597,7 @@ ${parts.join("\n")}
             renderPipeId: "alphaMask",
             action: "popMaskEnd",
             mask,
+            inverse: _maskedContainer._maskOptions.inverse,
             canBundle: false
           });
         }
@@ -26523,16 +27606,18 @@ ${parts.join("\n")}
           const renderMask = instruction.mask.renderMaskToTexture;
           if (instruction.action === "pushMaskBegin") {
             const filterEffect = BigPool.get(AlphaMaskEffect);
+            filterEffect.inverse = instruction.inverse;
             if (renderMask) {
               instruction.mask.mask.measurable = true;
               const bounds = getGlobalBounds(instruction.mask.mask, true, tempBounds3);
               instruction.mask.mask.measurable = false;
               bounds.ceil();
+              const colorTextureSource = renderer.renderTarget.renderTarget.colorTexture.source;
               const filterTexture = TexturePool.getOptimalTexture(
                 bounds.width,
                 bounds.height,
-                1,
-                false
+                colorTextureSource._resolution,
+                colorTextureSource.antialias
               );
               renderer.renderTarget.push(filterTexture, true);
               renderer.globalUniforms.push({
@@ -26558,6 +27643,9 @@ ${parts.join("\n")}
           } else if (instruction.action === "pushMaskEnd") {
             const maskData = this._activeMaskStage[this._activeMaskStage.length - 1];
             if (renderMask) {
+              if (renderer.type === RendererType.WEBGL) {
+                renderer.renderTarget.finishRenderPass();
+              }
               renderer.renderTarget.pop();
               renderer.globalUniforms.pop();
             }
@@ -26667,7 +27755,7 @@ ${parts.join("\n")}
       init_Extensions();
       init_buildInstructions();
       init_const7();
-      init_const4();
+      init_const3();
       StencilMaskPipe = class {
         constructor(renderer) {
           this._maskStackHash = {};
@@ -26684,6 +27772,7 @@ ${parts.join("\n")}
             renderPipeId: "stencilMask",
             action: "pushMaskBegin",
             mask,
+            inverse: _container._maskOptions.inverse,
             canBundle: false
           });
           const maskContainer = effect.mask;
@@ -26699,7 +27788,7 @@ ${parts.join("\n")}
           collectAllRenderables(
             maskContainer,
             instructionSet,
-            renderer.renderPipes
+            renderer
           );
           maskContainer.includeInBuild = false;
           renderer.renderPipes.batch.break(instructionSet);
@@ -26707,6 +27796,7 @@ ${parts.join("\n")}
             renderPipeId: "stencilMask",
             action: "pushMaskEnd",
             mask,
+            inverse: _container._maskOptions.inverse,
             canBundle: false
           });
           const instructionsLength = instructionSet.instructionSize - maskData.instructionsStart - 1;
@@ -26722,6 +27812,7 @@ ${parts.join("\n")}
           instructionSet.add({
             renderPipeId: "stencilMask",
             action: "popMaskBegin",
+            inverse: _container._maskOptions.inverse,
             canBundle: false
           });
           const maskData = this._maskHash.get(mask);
@@ -26745,7 +27836,11 @@ ${parts.join("\n")}
             maskStackIndex++;
             renderer.colorMask.setMask(0);
           } else if (instruction.action === "pushMaskEnd") {
-            renderer.stencil.setStencilMode(STENCIL_MODES.MASK_ACTIVE, maskStackIndex);
+            if (instruction.inverse) {
+              renderer.stencil.setStencilMode(STENCIL_MODES.INVERSE_MASK_ACTIVE, maskStackIndex);
+            } else {
+              renderer.stencil.setStencilMode(STENCIL_MODES.MASK_ACTIVE, maskStackIndex);
+            }
             renderer.colorMask.setMask(15);
           } else if (instruction.action === "popMaskBegin") {
             renderer.colorMask.setMask(0);
@@ -26757,7 +27852,11 @@ ${parts.join("\n")}
             }
             maskStackIndex--;
           } else if (instruction.action === "popMaskEnd") {
-            renderer.stencil.setStencilMode(STENCIL_MODES.MASK_ACTIVE, maskStackIndex);
+            if (instruction.inverse) {
+              renderer.stencil.setStencilMode(STENCIL_MODES.INVERSE_MASK_ACTIVE, maskStackIndex);
+            } else {
+              renderer.stencil.setStencilMode(STENCIL_MODES.MASK_ACTIVE, maskStackIndex);
+            }
             renderer.colorMask.setMask(15);
           }
           this._maskStackHash[renderTargetUid] = maskStackIndex;
@@ -27163,7 +28262,7 @@ ${parts.join("\n")}
       init_Texture();
       RenderTexture = class extends Texture {
         static create(options) {
-          return new Texture({
+          return new RenderTexture({
             source: new TextureSource(options)
           });
         }
@@ -27248,6 +28347,7 @@ ${parts.join("\n")}
             target,
             clearColor
           });
+          target.source.updateMipmaps();
           return target;
         }
         destroy() {
@@ -27360,6 +28460,9 @@ ${parts.join("\n")}
         get bindGroup() {
           return this._currentGlobalUniformData.bindGroup;
         }
+        get globalUniformData() {
+          return this._currentGlobalUniformData;
+        }
         get uniformGroup() {
           return this._currentGlobalUniformData.bindGroup.resources[0];
         }
@@ -27390,6 +28493,96 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/SchedulerSystem.mjs
+  var uid2, SchedulerSystem;
+  var init_SchedulerSystem = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/SchedulerSystem.mjs"() {
+      init_Extensions();
+      init_Ticker();
+      uid2 = 1;
+      SchedulerSystem = class {
+        constructor() {
+          this._tasks = [];
+          this._offset = 0;
+        }
+        /** Initializes the scheduler system and starts the ticker. */
+        init() {
+          Ticker.system.add(this._update, this);
+        }
+        /**
+         * Schedules a repeating task.
+         * @param func - The function to execute.
+         * @param duration - The interval duration in milliseconds.
+         * @param useOffset - this will spread out tasks so that they do not all run at the same time
+         * @returns The unique identifier for the scheduled task.
+         */
+        repeat(func, duration, useOffset = true) {
+          const id = uid2++;
+          let offset = 0;
+          if (useOffset) {
+            this._offset += 1e3;
+            offset = this._offset;
+          }
+          this._tasks.push({
+            func,
+            duration,
+            start: performance.now(),
+            offset,
+            last: performance.now(),
+            repeat: true,
+            id
+          });
+          return id;
+        }
+        /**
+         * Cancels a scheduled task.
+         * @param id - The unique identifier of the task to cancel.
+         */
+        cancel(id) {
+          for (let i2 = 0; i2 < this._tasks.length; i2++) {
+            if (this._tasks[i2].id === id) {
+              this._tasks.splice(i2, 1);
+              return;
+            }
+          }
+        }
+        /**
+         * Updates and executes the scheduled tasks.
+         * @private
+         */
+        _update() {
+          const now2 = performance.now();
+          for (let i2 = 0; i2 < this._tasks.length; i2++) {
+            const task = this._tasks[i2];
+            if (now2 - task.offset - task.last >= task.duration) {
+              const elapsed = now2 - task.start;
+              task.func(elapsed);
+              task.last = now2;
+            }
+          }
+        }
+        /**
+         * Destroys the scheduler system and removes all tasks.
+         * @internal
+         * @ignore
+         */
+        destroy() {
+          Ticker.system.remove(this._update, this);
+          this._tasks.length = 0;
+        }
+      };
+      SchedulerSystem.extension = {
+        type: [
+          ExtensionType.WebGLSystem,
+          ExtensionType.WebGPUSystem,
+          ExtensionType.CanvasSystem
+        ],
+        name: "scheduler",
+        priority: 0
+      };
+    }
+  });
+
   // ../core/node_modules/pixi.js/lib/utils/sayHello.mjs
   function sayHello(type) {
     if (saidHello) {
@@ -27413,12 +28606,12 @@ ${parts.join("\n")}
     }
     saidHello = true;
   }
-  var saidHello, VERSION2;
+  var saidHello;
   var init_sayHello = __esm({
     "../core/node_modules/pixi.js/lib/utils/sayHello.mjs"() {
       init_adapter();
+      init_const8();
       saidHello = false;
-      VERSION2 = "8.1.6";
     }
   });
 
@@ -27463,6 +28656,189 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/pixi.js/lib/utils/data/clean.mjs
+  function cleanHash(hash) {
+    let clean = false;
+    for (const i2 in hash) {
+      if (hash[i2] == void 0) {
+        clean = true;
+        break;
+      }
+    }
+    if (!clean)
+      return hash;
+    const cleanHash2 = /* @__PURE__ */ Object.create(null);
+    for (const i2 in hash) {
+      const value = hash[i2];
+      if (value) {
+        cleanHash2[i2] = value;
+      }
+    }
+    return cleanHash2;
+  }
+  function cleanArray(arr) {
+    let offset = 0;
+    for (let i2 = 0; i2 < arr.length; i2++) {
+      if (arr[i2] == void 0) {
+        offset++;
+      } else {
+        arr[i2 - offset] = arr[i2];
+      }
+    }
+    arr.length = arr.length - offset;
+    return arr;
+  }
+  var init_clean = __esm({
+    "../core/node_modules/pixi.js/lib/utils/data/clean.mjs"() {
+      "use strict";
+    }
+  });
+
+  // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/RenderableGCSystem.mjs
+  var _RenderableGCSystem, RenderableGCSystem;
+  var init_RenderableGCSystem = __esm({
+    "../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/RenderableGCSystem.mjs"() {
+      init_Extensions();
+      init_clean();
+      _RenderableGCSystem = class _RenderableGCSystem2 {
+        /** @param renderer - The renderer this System works for. */
+        constructor(renderer) {
+          this._managedRenderables = [];
+          this._managedHashes = [];
+          this._managedArrays = [];
+          this._renderer = renderer;
+        }
+        init(options) {
+          options = { ..._RenderableGCSystem2.defaultOptions, ...options };
+          this.maxUnusedTime = options.renderableGCMaxUnusedTime;
+          this._frequency = options.renderableGCFrequency;
+          this.enabled = options.renderableGCActive;
+        }
+        get enabled() {
+          return !!this._handler;
+        }
+        set enabled(value) {
+          if (this.enabled === value)
+            return;
+          if (value) {
+            this._handler = this._renderer.scheduler.repeat(
+              () => this.run(),
+              this._frequency,
+              false
+            );
+            this._hashHandler = this._renderer.scheduler.repeat(
+              () => {
+                for (const hash of this._managedHashes) {
+                  hash.context[hash.hash] = cleanHash(hash.context[hash.hash]);
+                }
+              },
+              this._frequency
+            );
+            this._arrayHandler = this._renderer.scheduler.repeat(
+              () => {
+                for (const array of this._managedArrays) {
+                  cleanArray(array.context[array.hash]);
+                }
+              },
+              this._frequency
+            );
+          } else {
+            this._renderer.scheduler.cancel(this._handler);
+            this._renderer.scheduler.cancel(this._hashHandler);
+            this._renderer.scheduler.cancel(this._arrayHandler);
+          }
+        }
+        addManagedHash(context4, hash) {
+          this._managedHashes.push({ context: context4, hash });
+        }
+        addManagedArray(context4, hash) {
+          this._managedArrays.push({ context: context4, hash });
+        }
+        prerender() {
+          this._now = performance.now();
+        }
+        addRenderable(renderable, instructionSet) {
+          if (!this.enabled)
+            return;
+          renderable._lastUsed = this._now;
+          if (renderable._lastInstructionTick === -1) {
+            this._managedRenderables.push(renderable);
+            renderable.once("destroyed", this._removeRenderable, this);
+          }
+          renderable._lastInstructionTick = instructionSet.tick;
+        }
+        /** Runs the scheduled garbage collection */
+        run() {
+          const now2 = performance.now();
+          const managedRenderables = this._managedRenderables;
+          const renderPipes3 = this._renderer.renderPipes;
+          let offset = 0;
+          for (let i2 = 0; i2 < managedRenderables.length; i2++) {
+            const renderable = managedRenderables[i2];
+            if (renderable === null) {
+              offset++;
+              continue;
+            }
+            const renderGroup = renderable.renderGroup ?? renderable.parentRenderGroup;
+            const currentIndex = renderGroup?.instructionSet?.tick ?? -1;
+            if (renderable._lastInstructionTick !== currentIndex && now2 - renderable._lastUsed > this.maxUnusedTime) {
+              if (!renderable.destroyed) {
+                const rp = renderPipes3;
+                rp[renderable.renderPipeId].destroyRenderable(renderable);
+              }
+              renderable._lastInstructionTick = -1;
+              offset++;
+              renderable.off("destroyed", this._removeRenderable, this);
+            } else {
+              managedRenderables[i2 - offset] = renderable;
+            }
+          }
+          managedRenderables.length = managedRenderables.length - offset;
+        }
+        destroy() {
+          this.enabled = false;
+          this._renderer = null;
+          this._managedRenderables.length = 0;
+          this._managedHashes.length = 0;
+          this._managedArrays.length = 0;
+        }
+        _removeRenderable(renderable) {
+          const index = this._managedRenderables.indexOf(renderable);
+          if (index >= 0) {
+            renderable.off("destroyed", this._removeRenderable, this);
+            this._managedRenderables[index] = null;
+          }
+        }
+      };
+      _RenderableGCSystem.extension = {
+        type: [
+          ExtensionType.WebGLSystem,
+          ExtensionType.WebGPUSystem
+        ],
+        name: "renderableGC",
+        priority: 0
+      };
+      _RenderableGCSystem.defaultOptions = {
+        /**
+         * If set to true, this will enable the garbage collector on the GPU.
+         * @default true
+         */
+        renderableGCActive: true,
+        /**
+         * The maximum idle frames before a texture is destroyed by garbage collection.
+         * @default 60 * 60
+         */
+        renderableGCMaxUnusedTime: 6e4,
+        /**
+         * Frames between two garbage collections.
+         * @default 600
+         */
+        renderableGCFrequency: 3e4
+      };
+      RenderableGCSystem = _RenderableGCSystem;
+    }
+  });
+
   // ../core/node_modules/pixi.js/lib/rendering/renderers/shared/texture/TextureGCSystem.mjs
   var _TextureGCSystem, TextureGCSystem;
   var init_TextureGCSystem = __esm({
@@ -27478,7 +28854,7 @@ ${parts.join("\n")}
         init(options) {
           options = { ..._TextureGCSystem2.defaultOptions, ...options };
           this.checkCountMax = options.textureGCCheckCountMax;
-          this.maxIdle = options.textureGCAMaxIdle;
+          this.maxIdle = options.textureGCAMaxIdle ?? options.textureGCMaxIdle;
           this.active = options.textureGCActive;
         }
         /**
@@ -27530,10 +28906,15 @@ ${parts.join("\n")}
          */
         textureGCActive: true,
         /**
+         * @deprecated since 8.3.0
+         * @see {@link TextureGCSystem.textureGCMaxIdle}
+         */
+        textureGCAMaxIdle: null,
+        /**
          * The maximum idle frames before a texture is destroyed by garbage collection.
          * @default 60 * 60
          */
-        textureGCAMaxIdle: 60 * 60,
+        textureGCMaxIdle: 60 * 60,
         /**
          * Frames between two garbage collections.
          * @default 600
@@ -27541,7 +28922,6 @@ ${parts.join("\n")}
         textureGCCheckCountMax: 600
       };
       TextureGCSystem = _TextureGCSystem;
-      extensions.add(TextureGCSystem);
     }
   });
 
@@ -27727,6 +29107,16 @@ ${parts.join("\n")}
       init_RenderTarget();
       init_getCanvasTexture();
       _ViewSystem = class _ViewSystem2 {
+        /**
+         * Whether CSS dimensions of canvas view should be resized to screen dimensions automatically.
+         * @member {boolean}
+         */
+        get autoDensity() {
+          return this.texture.source.autoDensity;
+        }
+        set autoDensity(value) {
+          this.texture.source.autoDensity = value;
+        }
         /** The resolution / device pixel ratio of the renderer. */
         get resolution() {
           return this.texture.source._resolution;
@@ -27761,11 +29151,6 @@ ${parts.join("\n")}
             isRoot: true
           });
           this.texture.source.transparent = options.backgroundAlpha < 1;
-          this.multiView = !!options.multiView;
-          if (this.autoDensity) {
-            this.canvas.style.width = `${this.texture.width}px`;
-            this.canvas.style.height = `${this.texture.height}px`;
-          }
           this.resolution = options.resolution;
         }
         /**
@@ -27778,10 +29163,6 @@ ${parts.join("\n")}
           this.texture.source.resize(desiredScreenWidth, desiredScreenHeight, resolution);
           this.screen.width = this.texture.frame.width;
           this.screen.height = this.texture.frame.height;
-          if (this.autoDensity) {
-            this.canvas.style.width = `${desiredScreenWidth}px`;
-            this.canvas.style.height = `${desiredScreenHeight}px`;
-          }
         }
         /**
          * Destroys this System and optionally removes the canvas from the dom.
@@ -27838,6 +29219,7 @@ ${parts.join("\n")}
       init_RenderGroupPipe();
       init_RenderGroupSystem();
       init_SpritePipe();
+      init_globalHooks();
       init_BatcherPipe();
       init_AlphaMaskPipe();
       init_ColorMaskPipe();
@@ -27847,7 +29229,9 @@ ${parts.join("\n")}
       init_ExtractSystem();
       init_GenerateTextureSystem();
       init_GlobalUniformSystem();
+      init_SchedulerSystem();
       init_HelloSystem();
+      init_RenderableGCSystem();
       init_TextureGCSystem();
       init_ViewSystem();
       SharedSystems = [
@@ -27858,7 +29242,10 @@ ${parts.join("\n")}
         RenderGroupSystem,
         TextureGCSystem,
         GenerateTextureSystem,
-        ExtractSystem
+        ExtractSystem,
+        RendererInitHook,
+        RenderableGCSystem,
+        SchedulerSystem
       ];
       SharedRenderPipes = [
         BlendModePipe,
@@ -27882,6 +29269,7 @@ ${parts.join("\n")}
         constructor(renderer) {
           this._hash = /* @__PURE__ */ Object.create(null);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_hash");
         }
         contextChange(gpu) {
           this._gpu = gpu;
@@ -27966,9 +29354,10 @@ ${parts.join("\n")}
       init_Extensions();
       init_fastCopy();
       GpuBufferSystem = class {
-        constructor() {
+        constructor(renderer) {
           this._gpuBuffers = /* @__PURE__ */ Object.create(null);
           this._managedBuffers = [];
+          renderer.renderableGC.addManagedHash(this, "_gpuBuffers");
         }
         contextChange(gpu) {
           this._gpu = gpu;
@@ -28004,6 +29393,7 @@ ${parts.join("\n")}
             buffer.on("update", this.updateBuffer, this);
             buffer.on("change", this.onBufferChange, this);
             buffer.on("destroy", this.onBufferDestroy, this);
+            this._managedBuffers.push(buffer);
           }
           const gpuBuffer = this._gpu.device.createBuffer(buffer.descriptor);
           buffer._updateID = 0;
@@ -28012,7 +29402,6 @@ ${parts.join("\n")}
             gpuBuffer.unmap();
           }
           this._gpuBuffers[buffer.uid] = gpuBuffer;
-          this._managedBuffers.push(buffer);
           return gpuBuffer;
         }
         onBufferChange(buffer) {
@@ -28086,6 +29475,7 @@ ${parts.join("\n")}
   var GpuDeviceSystem;
   var init_GpuDeviceSystem = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/GpuDeviceSystem.mjs"() {
+      init_adapter();
       init_Extensions();
       GpuDeviceSystem = class {
         /**
@@ -28118,7 +29508,7 @@ ${parts.join("\n")}
          * @returns {WebGLRenderingContext} the WebGL context
          */
         async _createDeviceAndAdaptor(options) {
-          const adapter = await navigator.gpu.requestAdapter({
+          const adapter = await DOMAdapter.get().getNavigator().gpu.requestAdapter({
             powerPreference: options.powerPreference,
             forceFallbackAdapter: options.forceFallbackAdapter
           });
@@ -28223,10 +29613,10 @@ ${parts.join("\n")}
           const gpuBindGroup = this._renderer.bindGroup.getBindGroup(bindGroup, program, index);
           this.renderPassEncoder.setBindGroup(index, gpuBindGroup);
         }
-        setGeometry(geometry) {
-          for (const i2 in geometry.attributes) {
-            const attribute = geometry.attributes[i2];
-            this._setVertexBuffer(attribute.location, attribute.buffer);
+        setGeometry(geometry, program) {
+          const buffersToBind = this._renderer.pipeline.getBufferNamesToBind(geometry, program);
+          for (const i2 in buffersToBind) {
+            this._setVertexBuffer(i2, geometry.attributes[buffersToBind[i2]].buffer);
           }
           if (geometry.indexBuffer) {
             this._setIndexBuffer(geometry.indexBuffer);
@@ -28252,7 +29642,7 @@ ${parts.join("\n")}
         draw(options) {
           const { geometry, shader, state, topology, size, start, instanceCount, skipSync } = options;
           this.setPipelineFromGeometryProgramAndState(geometry, shader.gpuProgram, state, topology);
-          this.setGeometry(geometry);
+          this.setGeometry(geometry, shader.gpuProgram);
           this._setShaderBindGroups(shader, skipSync);
           if (geometry.indexBuffer) {
             this.renderPassEncoder.drawIndexed(
@@ -28335,7 +29725,7 @@ ${parts.join("\n")}
   var init_GpuStencilSystem = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/GpuStencilSystem.mjs"() {
       init_Extensions();
-      init_const4();
+      init_const3();
       GpuStencilSystem = class {
         constructor(renderer) {
           this._renderTargetStencilState = /* @__PURE__ */ Object.create(null);
@@ -28383,7 +29773,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/rendering/renderers/shared/shader/UboSystem.mjs"() {
       init_unsafeEvalSupported();
       init_Buffer();
-      init_const3();
+      init_const4();
       UboSystem = class {
         constructor(adaptor) {
           this._syncFunctionHash = /* @__PURE__ */ Object.create(null);
@@ -28391,7 +29781,7 @@ ${parts.join("\n")}
           this._systemCheck();
         }
         /**
-         * Overrideable function by `pixi.js/unsafe-eval` to silence
+         * Overridable function by `pixi.js/unsafe-eval` to silence
          * throwing an error if platform doesn't support unsafe-evals.
          * @private
          */
@@ -28940,7 +30330,7 @@ ${parts.join("\n")}
       init_Extensions();
       init_Buffer();
       init_BufferResource();
-      init_const3();
+      init_const4();
       init_UboBatch();
       init_BindGroup();
       minUniformOffsetAlignment = 128;
@@ -28951,6 +30341,7 @@ ${parts.join("\n")}
           this._bindGroups = [];
           this._bufferResources = [];
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_bindGroupHash");
           this._batchBuffer = new UboBatch({ minUniformOffsetAlignment });
           const totalBuffers = 256 / minUniformOffsetAlignment;
           for (let i2 = 0; i2 < totalBuffers; i2++) {
@@ -29072,7 +30463,6 @@ ${parts.join("\n")}
       const attribute = geometry.attributes[i2];
       const attributeData = extractedData[i2];
       if (attributeData) {
-        attribute.location ?? (attribute.location = attributeData.location);
         attribute.format ?? (attribute.format = attributeData.format);
         attribute.offset ?? (attribute.offset = attributeData.offset);
         attribute.instance ?? (attribute.instance = attributeData.instance);
@@ -29113,7 +30503,7 @@ ${parts.join("\n")}
   var GpuStencilModesToPixi;
   var init_GpuStencilModesToPixi = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/state/GpuStencilModesToPixi.mjs"() {
-      init_const4();
+      init_const3();
       GpuStencilModesToPixi = [];
       GpuStencilModesToPixi[STENCIL_MODES.NONE] = void 0;
       GpuStencilModesToPixi[STENCIL_MODES.DISABLED] = {
@@ -29151,6 +30541,17 @@ ${parts.join("\n")}
           passOp: "keep"
         }
       };
+      GpuStencilModesToPixi[STENCIL_MODES.INVERSE_MASK_ACTIVE] = {
+        stencilWriteMask: 0,
+        stencilFront: {
+          compare: "not-equal",
+          passOp: "replace"
+        },
+        stencilBack: {
+          compare: "not-equal",
+          passOp: "replace"
+        }
+      };
     }
   });
 
@@ -29165,8 +30566,9 @@ ${parts.join("\n")}
   var init_PipelineSystem = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/pipeline/PipelineSystem.mjs"() {
       init_Extensions();
+      init_warn();
       init_ensureAttributes();
-      init_const4();
+      init_const3();
       init_createIdFromString();
       init_GpuStencilModesToPixi();
       topologyStringToId = {
@@ -29180,6 +30582,7 @@ ${parts.join("\n")}
         constructor(renderer) {
           this._moduleCache = /* @__PURE__ */ Object.create(null);
           this._bufferLayoutsCache = /* @__PURE__ */ Object.create(null);
+          this._bindingNamesCache = /* @__PURE__ */ Object.create(null);
           this._pipeCache = /* @__PURE__ */ Object.create(null);
           this._pipeStateCaches = /* @__PURE__ */ Object.create(null);
           this._colorMask = 15;
@@ -29239,7 +30642,7 @@ ${parts.join("\n")}
         }
         _createPipeline(geometry, program, state, topology) {
           const device = this._gpu.device;
-          const buffers = this._createVertexBufferLayouts(geometry);
+          const buffers = this._createVertexBufferLayouts(geometry, program);
           const blendModes = this._renderer.state.getColorTargets(state);
           blendModes[0].writeMask = this._stencilMode === STENCIL_MODES.RENDERING_MASK_ADD ? 0 : this._colorMask;
           const layout = this._renderer.shader.getProgramData(program).pipeline;
@@ -29295,18 +30698,58 @@ ${parts.join("\n")}
           const attributeKeys = Object.keys(geometry.attributes).sort();
           for (let i2 = 0; i2 < attributeKeys.length; i2++) {
             const attribute = geometry.attributes[attributeKeys[i2]];
-            keyGen[index++] = attribute.location;
             keyGen[index++] = attribute.offset;
             keyGen[index++] = attribute.format;
             keyGen[index++] = attribute.stride;
+            keyGen[index++] = attribute.instance;
           }
-          const stringKey = keyGen.join("");
+          const stringKey = keyGen.join("|");
           geometry._layoutKey = createIdFromString(stringKey, "geometry");
           return geometry._layoutKey;
         }
-        _createVertexBufferLayouts(geometry) {
-          if (this._bufferLayoutsCache[geometry._layoutKey]) {
-            return this._bufferLayoutsCache[geometry._layoutKey];
+        _generateAttributeLocationsKey(program) {
+          const keyGen = [];
+          let index = 0;
+          const attributeKeys = Object.keys(program.attributeData).sort();
+          for (let i2 = 0; i2 < attributeKeys.length; i2++) {
+            const attribute = program.attributeData[attributeKeys[i2]];
+            keyGen[index++] = attribute.location;
+          }
+          const stringKey = keyGen.join("|");
+          program._attributeLocationsKey = createIdFromString(stringKey, "programAttributes");
+          return program._attributeLocationsKey;
+        }
+        /**
+         * Returns a hash of buffer names mapped to bind locations.
+         * This is used to bind the correct buffer to the correct location in the shader.
+         * @param geometry - The geometry where to get the buffer names
+         * @param program - The program where to get the buffer names
+         * @returns An object of buffer names mapped to the bind location.
+         */
+        getBufferNamesToBind(geometry, program) {
+          const key = geometry._layoutKey << 16 | program._attributeLocationsKey;
+          if (this._bindingNamesCache[key])
+            return this._bindingNamesCache[key];
+          const data = this._createVertexBufferLayouts(geometry, program);
+          const bufferNamesToBind = /* @__PURE__ */ Object.create(null);
+          const attributeData = program.attributeData;
+          for (let i2 = 0; i2 < data.length; i2++) {
+            for (const j2 in attributeData) {
+              if (attributeData[j2].location === i2) {
+                bufferNamesToBind[i2] = j2;
+                break;
+              }
+            }
+          }
+          this._bindingNamesCache[key] = bufferNamesToBind;
+          return bufferNamesToBind;
+        }
+        _createVertexBufferLayouts(geometry, program) {
+          if (!program._attributeLocationsKey)
+            this._generateAttributeLocationsKey(program);
+          const key = geometry._layoutKey << 16 | program._attributeLocationsKey;
+          if (this._bufferLayoutsCache[key]) {
+            return this._bufferLayoutsCache[key];
           }
           const vertexBuffersLayout = [];
           geometry.buffers.forEach((buffer) => {
@@ -29316,13 +30759,16 @@ ${parts.join("\n")}
               attributes: []
             };
             const bufferEntryAttributes = bufferEntry.attributes;
-            for (const i2 in geometry.attributes) {
+            for (const i2 in program.attributeData) {
               const attribute = geometry.attributes[i2];
+              if ((attribute.divisor ?? 1) !== 1) {
+                warn(`Attribute ${i2} has an invalid divisor value of '${attribute.divisor}'. WebGPU only supports a divisor value of 1`);
+              }
               if (attribute.buffer === buffer) {
                 bufferEntry.arrayStride = attribute.stride;
                 bufferEntry.stepMode = attribute.instance ? "instance" : "vertex";
                 bufferEntryAttributes.push({
-                  shaderLocation: attribute.location,
+                  shaderLocation: program.attributeData[i2].location,
                   offset: attribute.offset,
                   format: attribute.format
                 });
@@ -29332,7 +30778,7 @@ ${parts.join("\n")}
               vertexBuffersLayout.push(bufferEntry);
             }
           });
-          this._bufferLayoutsCache[geometry._layoutKey] = vertexBuffersLayout;
+          this._bufferLayoutsCache[key] = vertexBuffersLayout;
           return vertexBuffersLayout;
         }
         _updatePipeHash() {
@@ -29412,6 +30858,7 @@ ${parts.join("\n")}
           this._gpuRenderTargetHash = /* @__PURE__ */ Object.create(null);
           this._renderTargetStack = [];
           this._renderer = renderer;
+          renderer.renderableGC.addManagedHash(this, "_gpuRenderTargetHash");
         }
         /** called when dev wants to finish a render pass */
         finishRenderPass() {
@@ -29441,6 +30888,9 @@ ${parts.join("\n")}
           this.rootViewPort.copyFrom(this.viewport);
           this.rootRenderTarget = this.renderTarget;
           this.renderingToScreen = isRenderingToScreen(this.rootRenderTarget);
+        }
+        postrender() {
+          this.adaptor.postrender?.(this.rootRenderTarget);
         }
         /**
          * Binding a render surface! This is the main function of the render target system.
@@ -29621,6 +31071,7 @@ ${parts.join("\n")}
             }
             renderSurface.once("destroy", () => {
               renderTarget.destroy();
+              this._renderSurfaceToRenderTargetHash.delete(renderSurface);
               const gpuRenderTarget = this._gpuRenderTargetHash[renderTarget.uid];
               if (gpuRenderTarget) {
                 this._gpuRenderTargetHash[renderTarget.uid] = null;
@@ -29899,6 +31350,7 @@ ${parts.join("\n")}
         }
         contextChange(gpu) {
           this._gpu = gpu;
+          this.maxTextures = gpu.device.limits.maxSampledTexturesPerShaderStage;
         }
         getProgramData(program) {
           return this._gpuProgramData[program._layoutKey] || this._createGPUProgramData(program);
@@ -30051,6 +31503,30 @@ ${parts.join("\n")}
           srcFactor: "zero",
           dstFactor: "one-minus-src",
           operation: "add"
+        }
+      };
+      GpuBlendModesToPixi.min = {
+        alpha: {
+          srcFactor: "one",
+          dstFactor: "one",
+          operation: "min"
+        },
+        color: {
+          srcFactor: "one",
+          dstFactor: "one",
+          operation: "min"
+        }
+      };
+      GpuBlendModesToPixi.max = {
+        alpha: {
+          srcFactor: "one",
+          dstFactor: "one",
+          operation: "max"
+        },
+        color: {
+          srcFactor: "one",
+          dstFactor: "one",
+          operation: "max"
         }
       };
     }
@@ -30383,6 +31859,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/rendering/renderers/gpu/texture/GpuTextureSystem.mjs"() {
       init_adapter();
       init_Extensions();
+      init_UniformGroup();
       init_CanvasPool();
       init_BindGroup();
       init_gpuUploadBufferImageResource();
@@ -30404,6 +31881,10 @@ ${parts.join("\n")}
             compressed: gpuUploadCompressedTextureResource
           };
           this._renderer = renderer;
+          renderer.renderableGC.addManagedHash(this, "_gpuSources");
+          renderer.renderableGC.addManagedHash(this, "_gpuSamplers");
+          renderer.renderableGC.addManagedHash(this, "_bindGroupHash");
+          renderer.renderableGC.addManagedHash(this, "_textureViewHash");
         }
         contextChange(gpu) {
           this._gpu = gpu;
@@ -30498,17 +31979,28 @@ ${parts.join("\n")}
         getGpuSource(source2) {
           return this._gpuSources[source2.uid] || this.initSource(source2);
         }
+        /**
+         * this returns s bind group for a specific texture, the bind group contains
+         * - the texture source
+         * - the texture style
+         * - the texture matrix
+         * This is cached so the bind group should only be created once per texture
+         * @param texture - the texture you want the bindgroup for
+         * @returns the bind group for the texture
+         */
         getTextureBindGroup(texture) {
           return this._bindGroupHash[texture.uid] ?? this._createTextureBindGroup(texture);
         }
         _createTextureBindGroup(texture) {
           const source2 = texture.source;
-          const bindGroupId = source2.uid;
-          this._bindGroupHash[bindGroupId] = new BindGroup({
+          this._bindGroupHash[texture.uid] = new BindGroup({
             0: source2,
-            1: source2.style
+            1: source2.style,
+            2: new UniformGroup({
+              uTextureMatrix: { type: "mat3x3<f32>", value: texture.textureMatrix.mapCoord }
+            })
           });
-          return this._bindGroupHash[bindGroupId];
+          return this._bindGroupHash[texture.uid];
         }
         getTextureView(texture) {
           const source2 = texture.source;
@@ -30529,7 +32021,7 @@ ${parts.join("\n")}
             device: renderer.gpu.device,
             // eslint-disable-next-line max-len
             usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
-            format: navigator.gpu.getPreferredCanvasFormat(),
+            format: DOMAdapter.get().getNavigator().gpu.getPreferredCanvasFormat(),
             alphaMode: "premultiplied"
           });
           commandEncoder.copyTextureToTexture({
@@ -30657,6 +32149,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/scene/graphics/gl/GlGraphicsAdaptor.mjs"() {
       init_Extensions();
       init_Matrix();
+      init_maxRecommendedTextures();
       init_compileHighShaderToProgram();
       init_colorBit();
       init_generateTextureBatchBit();
@@ -30665,7 +32158,6 @@ ${parts.join("\n")}
       init_getBatchSamplersUniformGroup();
       init_Shader();
       init_UniformGroup();
-      init_maxRecommendedTextures();
       GlGraphicsAdaptor = class {
         init() {
           const uniforms = new UniformGroup({
@@ -30673,7 +32165,7 @@ ${parts.join("\n")}
             uTransformMatrix: { value: new Matrix(), type: "mat3x3<f32>" },
             uRound: { value: 0, type: "f32" }
           });
-          const maxTextures2 = maxRecommendedTextures();
+          const maxTextures2 = getMaxTexturesPerBatch();
           const glProgram3 = compileHighShaderGlProgram({
             name: "graphics",
             bits: [
@@ -30697,18 +32189,18 @@ ${parts.join("\n")}
           const renderer = graphicsPipe.renderer;
           const contextSystem = renderer.graphicsContext;
           const {
-            geometry,
+            batcher,
             instructions
           } = contextSystem.getContextRenderData(context4);
           shader.groups[0] = renderer.globalUniforms.bindGroup;
           renderer.state.set(graphicsPipe.state);
           renderer.shader.bind(shader);
-          renderer.geometry.bind(geometry, shader.glProgram);
+          renderer.geometry.bind(batcher.geometry, shader.glProgram);
           const batches = instructions.instructions;
           for (let i2 = 0; i2 < instructions.instructionSize; i2++) {
             const batch = batches[i2];
             if (batch.size) {
-              for (let j2 = 0; j2 < batch.textures.textures.length; j2++) {
+              for (let j2 = 0; j2 < batch.textures.count; j2++) {
                 renderer.texture.bind(batch.textures.textures[j2], j2);
               }
               renderer.geometry.draw("triangle-list", batch.size, batch.start);
@@ -30803,45 +32295,23 @@ ${parts.join("\n")}
   var init_GlBatchAdaptor = __esm({
     "../core/node_modules/pixi.js/lib/rendering/batcher/gl/GlBatchAdaptor.mjs"() {
       init_Extensions();
-      init_compileHighShaderToProgram();
-      init_colorBit();
-      init_generateTextureBatchBit();
-      init_roundPixelsBit();
-      init_getBatchSamplersUniformGroup();
-      init_Shader();
       init_State();
-      init_maxRecommendedTextures();
       GlBatchAdaptor = class {
         constructor() {
           this._didUpload = false;
           this._tempState = State.for2d();
         }
         init(batcherPipe) {
-          const maxTextures2 = maxRecommendedTextures();
-          const glProgram3 = compileHighShaderGlProgram({
-            name: "batch",
-            bits: [
-              colorBitGl,
-              generateTextureBatchBitGl(maxTextures2),
-              roundPixelsBitGl
-            ]
-          });
-          this._shader = new Shader({
-            glProgram: glProgram3,
-            resources: {
-              batchSamplers: getBatchSamplersUniformGroup(maxTextures2)
-            }
-          });
           batcherPipe.renderer.runners.contextChange.add(this);
         }
         contextChange() {
           this._didUpload = false;
         }
-        start(batchPipe, geometry) {
+        start(batchPipe, geometry, shader) {
           const renderer = batchPipe.renderer;
-          renderer.shader.bind(this._shader, this._didUpload);
+          renderer.shader.bind(shader, this._didUpload);
           renderer.shader.updateUniformGroup(renderer.globalUniforms.uniformGroup);
-          renderer.geometry.bind(geometry, this._shader.glProgram);
+          renderer.geometry.bind(geometry, shader.glProgram);
         }
         execute(batchPipe, batch) {
           const renderer = batchPipe.renderer;
@@ -30849,14 +32319,10 @@ ${parts.join("\n")}
           this._tempState.blendMode = batch.blendMode;
           renderer.state.set(this._tempState);
           const textures = batch.textures.textures;
-          for (let i2 = 0; i2 < textures.length; i2++) {
+          for (let i2 = 0; i2 < batch.textures.count; i2++) {
             renderer.texture.bind(textures[i2], i2);
           }
           renderer.geometry.draw("triangle-list", batch.size, batch.start);
-        }
-        destroy() {
-          this._shader.destroy(true);
-          this._shader = null;
         }
       };
       GlBatchAdaptor.extension = {
@@ -30870,7 +32336,7 @@ ${parts.join("\n")}
 
   // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/buffer/const.mjs
   var BUFFER_TYPE;
-  var init_const8 = __esm({
+  var init_const9 = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/buffer/const.mjs"() {
       "use strict";
       BUFFER_TYPE = /* @__PURE__ */ ((BUFFER_TYPE2) => {
@@ -30903,8 +32369,8 @@ ${parts.join("\n")}
   var init_GlBufferSystem = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/buffer/GlBufferSystem.mjs"() {
       init_Extensions();
-      init_const3();
-      init_const8();
+      init_const4();
+      init_const9();
       init_GlBuffer();
       GlBufferSystem = class {
         /**
@@ -30914,6 +32380,7 @@ ${parts.join("\n")}
           this._gpuBuffers = /* @__PURE__ */ Object.create(null);
           this._boundBufferBases = /* @__PURE__ */ Object.create(null);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_gpuBuffers");
         }
         /**
          * @ignore
@@ -31088,6 +32555,16 @@ ${parts.join("\n")}
         }
         init(options) {
           options = { ..._GlContextSystem2.defaultOptions, ...options };
+          let multiView = this.multiView = options.multiView;
+          if (options.context && multiView) {
+            warn("Renderer created with both a context and multiview enabled. Disabling multiView as both cannot work together.");
+            multiView = false;
+          }
+          if (multiView) {
+            this.canvas = DOMAdapter.get().createCanvas(this._renderer.canvas.width, this._renderer.canvas.height);
+          } else {
+            this.canvas = this._renderer.view.canvas;
+          }
           if (options.context) {
             this.initFromContext(options.context);
           } else {
@@ -31102,6 +32579,19 @@ ${parts.join("\n")}
               preserveDrawingBuffer: options.preserveDrawingBuffer,
               powerPreference: options.powerPreference ?? "default"
             });
+          }
+        }
+        ensureCanvasSize(targetCanvas) {
+          if (!this.multiView) {
+            if (targetCanvas !== this.canvas) {
+              warn("multiView is disabled, but targetCanvas is not the main canvas");
+            }
+            return;
+          }
+          const { canvas } = this;
+          if (canvas.width < targetCanvas.width || canvas.height < targetCanvas.height) {
+            canvas.width = Math.max(targetCanvas.width, targetCanvas.width);
+            canvas.height = Math.max(targetCanvas.height, targetCanvas.height);
           }
         }
         /**
@@ -31128,7 +32618,7 @@ ${parts.join("\n")}
          */
         createContext(preferWebGLVersion, options) {
           let gl;
-          const canvas = this._renderer.view.canvas;
+          const canvas = this.canvas;
           if (preferWebGLVersion === 2) {
             gl = canvas.getContext("webgl2", options);
           }
@@ -31278,7 +32768,12 @@ ${parts.join("\n")}
          * {@link WebGLOptions.webGLVersion}
          * @default 2
          */
-        preferWebGLVersion: 2
+        preferWebGLVersion: 2,
+        /**
+         * {@link WebGLOptions.multiView}
+         * @default false
+         */
+        multiView: false
       };
       GlContextSystem = _GlContextSystem;
     }
@@ -31286,7 +32781,7 @@ ${parts.join("\n")}
 
   // ../core/node_modules/pixi.js/lib/rendering/renderers/gl/texture/const.mjs
   var GL_FORMATS, GL_TARGETS, GL_TYPES;
-  var init_const9 = __esm({
+  var init_const10 = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/texture/const.mjs"() {
       "use strict";
       GL_FORMATS = /* @__PURE__ */ ((GL_FORMATS2) => {
@@ -31346,7 +32841,7 @@ ${parts.join("\n")}
   var infoMap;
   var init_getGlTypeFromFormat = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/geometry/utils/getGlTypeFromFormat.mjs"() {
-      init_const9();
+      init_const10();
       infoMap = {
         uint8x2: GL_TYPES.UNSIGNED_BYTE,
         uint8x4: GL_TYPES.UNSIGNED_BYTE,
@@ -31406,6 +32901,7 @@ ${parts.join("\n")}
           this._activeVao = null;
           this.hasVao = true;
           this.hasInstance = true;
+          this._renderer.renderableGC.addManagedHash(this, "_geometryVaoHash");
         }
         /** Sets up the renderer context and necessary buffers. */
         contextChange() {
@@ -31595,7 +33091,7 @@ ${parts.join("\n")}
                 bufferSystem.bind(buffer);
                 lastBuffer = glBuffer;
               }
-              const location = attribute.location;
+              const location = programAttrib.location;
               gl.enableVertexAttribArray(location);
               const attributeInfo = getAttributeInfoFromFormat(attribute.format);
               const type = getGlTypeFromFormat(attribute.format);
@@ -31619,7 +33115,8 @@ ${parts.join("\n")}
               }
               if (attribute.instance) {
                 if (this.hasInstance) {
-                  gl.vertexAttribDivisor(location, 1);
+                  const divisor = attribute.divisor ?? 1;
+                  gl.vertexAttribDivisor(location, divisor);
                 } else {
                   throw new Error("geometry error, GPU Instancing is not supported on this device");
                 }
@@ -31896,7 +33393,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/GlStencilSystem.mjs"() {
       init_Extensions();
       init_GpuStencilModesToPixi();
-      init_const4();
+      init_const3();
       GlStencilSystem = class {
         constructor(renderer) {
           this._stencilCache = {
@@ -32143,6 +33640,7 @@ ${parts.join("\n")}
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/renderTarget/GlRenderTargetAdaptor.mjs"() {
       init_Rectangle();
       init_warn();
+      init_CanvasSource();
       init_const7();
       init_GlRenderTarget();
       GlRenderTargetAdaptor = class {
@@ -32236,7 +33734,9 @@ ${parts.join("\n")}
           const renderer = this._renderer;
           const gl = renderer.gl;
           const glRenderTarget = new GlRenderTarget();
-          if (renderTarget.colorTexture.resource === renderer.gl.canvas) {
+          const colorTexture = renderTarget.colorTexture;
+          if (colorTexture.resource === renderer.canvas) {
+            this._renderer.context.ensureCanvasSize(renderTarget.colorTexture.resource);
             glRenderTarget.framebuffer = null;
             return glRenderTarget;
           }
@@ -32291,7 +33791,7 @@ ${parts.join("\n")}
           const renderTargetSystem = this._renderTargetSystem;
           const glRenderTarget = renderTargetSystem.getGpuRenderTarget(renderTarget);
           this._resizeColor(renderTarget, glRenderTarget);
-          if (renderTarget.stencil) {
+          if (renderTarget.stencil || renderTarget.depth) {
             this._resizeStencil(glRenderTarget);
           }
         }
@@ -32415,6 +33915,19 @@ ${parts.join("\n")}
               this._renderer.context.webGLVersion === 2 ? gl.DEPTH24_STENCIL8 : gl.DEPTH_STENCIL,
               glRenderTarget.width,
               glRenderTarget.height
+            );
+          }
+        }
+        postrender(renderTarget) {
+          if (!this._renderer.context.multiView)
+            return;
+          if (CanvasSource.test(renderTarget.colorTexture.resource)) {
+            const contextCanvas = this._renderer.context.canvas;
+            const canvasSource = renderTarget.colorTexture;
+            canvasSource.context2D.drawImage(
+              contextCanvas,
+              0,
+              canvasSource.pixelHeight - contextCanvas.height
             );
           }
         }
@@ -32920,6 +34433,7 @@ ${parts.join("\n")}
   var init_GlShaderSystem = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/shader/GlShaderSystem.mjs"() {
       init_Extensions();
+      init_maxRecommendedTextures();
       init_GenerateShaderSyncCode();
       init_generateProgram();
       defaultSyncData = {
@@ -32935,6 +34449,7 @@ ${parts.join("\n")}
           this._boundIndexToUniformsHash = /* @__PURE__ */ Object.create(null);
           this._shaderSyncFunctions = /* @__PURE__ */ Object.create(null);
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_programDataHash");
         }
         contextChange(gl) {
           this._gl = gl;
@@ -32942,7 +34457,9 @@ ${parts.join("\n")}
           this._programDataHash = /* @__PURE__ */ Object.create(null);
           this._boundUniformsIdsToIndexHash = /* @__PURE__ */ Object.create(null);
           this._boundIndexToUniformsHash = /* @__PURE__ */ Object.create(null);
+          this._shaderSyncFunctions = /* @__PURE__ */ Object.create(null);
           this._activeProgram = null;
+          this.maxTextures = getMaxTexturesPerBatch();
         }
         /**
          * Changes the current shader to the one given in parameter.
@@ -33271,7 +34788,7 @@ ${parts.join("\n")}
           }
         }
         /**
-         * Overrideable by the pixi.js/unsafe-eval package to use static syncUniforms instead.
+         * Overridable by the pixi.js/unsafe-eval package to use static syncUniforms instead.
          * @param group
          * @param program
          */
@@ -33336,11 +34853,22 @@ ${parts.join("\n")}
     blendMap["add-npm"] = [gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE];
     blendMap["screen-npm"] = [gl.SRC_ALPHA, gl.ONE_MINUS_SRC_COLOR, gl.ONE, gl.ONE_MINUS_SRC_ALPHA];
     blendMap.erase = [gl.ZERO, gl.ONE_MINUS_SRC_ALPHA];
+    const isWebGl2 = !(gl instanceof DOMAdapter.get().getWebGLRenderingContext());
+    if (isWebGl2) {
+      blendMap.min = [gl.ONE, gl.ONE, gl.ONE, gl.ONE, gl.MIN, gl.MIN];
+      blendMap.max = [gl.ONE, gl.ONE, gl.ONE, gl.ONE, gl.MAX, gl.MAX];
+    } else {
+      const ext = gl.getExtension("EXT_blend_minmax");
+      if (ext) {
+        blendMap.min = [gl.ONE, gl.ONE, gl.ONE, gl.ONE, ext.MIN_EXT, ext.MIN_EXT];
+        blendMap.max = [gl.ONE, gl.ONE, gl.ONE, gl.ONE, ext.MAX_EXT, ext.MAX_EXT];
+      }
+    }
     return blendMap;
   }
   var init_mapWebGLBlendModesToPixi = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/state/mapWebGLBlendModesToPixi.mjs"() {
-      "use strict";
+      init_adapter();
     }
   });
 
@@ -33558,7 +35086,7 @@ ${parts.join("\n")}
   var GlTexture;
   var init_GlTexture = __esm({
     "../core/node_modules/pixi.js/lib/rendering/renderers/gl/texture/GlTexture.mjs"() {
-      init_const9();
+      init_const10();
       GlTexture = class {
         constructor(texture) {
           this.target = GL_TARGETS.TEXTURE_2D;
@@ -34202,6 +35730,8 @@ ${parts.join("\n")}
           };
           this._useSeparateSamplers = false;
           this._renderer = renderer;
+          this._renderer.renderableGC.addManagedHash(this, "_glTextures");
+          this._renderer.renderableGC.addManagedHash(this, "_glSamplers");
         }
         contextChange(gl) {
           this._gl = gl;
@@ -34543,6 +36073,26 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/dist/block-schema.js
+  var require_block_schema = __commonJS({
+    "../core/node_modules/blockwise/dist/block-schema.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.blockSchema = void 0;
+      exports.blockSchema = {
+        type: "object",
+        required: ["x", "y", "w", "h"],
+        properties: {
+          x: { type: "number" },
+          y: { type: "number" },
+          w: { type: "number" },
+          h: { type: "number" }
+        },
+        additionalProperties: false
+      };
+    }
+  });
+
   // ../core/node_modules/blockwise/dist/calculate-block-center.js
   var require_calculate_block_center = __commonJS({
     "../core/node_modules/blockwise/dist/calculate-block-center.js"(exports) {
@@ -34705,10 +36255,10 @@ ${parts.join("\n")}
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.isBlockPositionEqual = void 0;
-      function isBlockPositionEqual2(a2, b2) {
+      function isBlockPositionEqual3(a2, b2) {
         return a2.x === b2.x && a2.y === b2.y;
       }
-      exports.isBlockPositionEqual = isBlockPositionEqual2;
+      exports.isBlockPositionEqual = isBlockPositionEqual3;
     }
   });
 
@@ -34722,6 +36272,61 @@ ${parts.join("\n")}
         return typeof value === "function";
       }
       exports.isFunction = isFunction3;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/lift.js
+  var require_lift = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/lift.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.operate = exports.hasLift = void 0;
+      var isFunction_1 = require_isFunction();
+      function hasLift3(source2) {
+        return isFunction_1.isFunction(source2 === null || source2 === void 0 ? void 0 : source2.lift);
+      }
+      exports.hasLift = hasLift3;
+      function operate3(init3) {
+        return function(source2) {
+          if (hasLift3(source2)) {
+            return source2.lift(function(liftedSource) {
+              try {
+                return init3(liftedSource, this);
+              } catch (err) {
+                this.error(err);
+              }
+            });
+          }
+          throw new TypeError("Unable to lift unknown Observable type");
+        };
+      }
+      exports.operate = operate3;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isArrayLike.js
+  var require_isArrayLike = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isArrayLike.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.isArrayLike = void 0;
+      exports.isArrayLike = function(x2) {
+        return x2 && typeof x2.length === "number" && typeof x2 !== "function";
+      };
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isPromise.js
+  var require_isPromise = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isPromise.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.isPromise = void 0;
+      var isFunction_1 = require_isFunction();
+      function isPromise3(value) {
+        return isFunction_1.isFunction(value === null || value === void 0 ? void 0 : value.then);
+      }
+      exports.isPromise = isPromise3;
     }
   });
 
@@ -35505,1885 +37110,6 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/lift.js
-  var require_lift = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/lift.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.operate = exports.hasLift = void 0;
-      var isFunction_1 = require_isFunction();
-      function hasLift3(source2) {
-        return isFunction_1.isFunction(source2 === null || source2 === void 0 ? void 0 : source2.lift);
-      }
-      exports.hasLift = hasLift3;
-      function operate3(init3) {
-        return function(source2) {
-          if (hasLift3(source2)) {
-            return source2.lift(function(liftedSource) {
-              try {
-                return init3(liftedSource, this);
-              } catch (err) {
-                this.error(err);
-              }
-            });
-          }
-          throw new TypeError("Unable to lift unknown Observable type");
-        };
-      }
-      exports.operate = operate3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/OperatorSubscriber.js
-  var require_OperatorSubscriber = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/OperatorSubscriber.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.OperatorSubscriber = exports.createOperatorSubscriber = void 0;
-      var Subscriber_1 = require_Subscriber();
-      function createOperatorSubscriber3(destination, onNext, onComplete, onError, onFinalize) {
-        return new OperatorSubscriber3(destination, onNext, onComplete, onError, onFinalize);
-      }
-      exports.createOperatorSubscriber = createOperatorSubscriber3;
-      var OperatorSubscriber3 = function(_super) {
-        __extends3(OperatorSubscriber4, _super);
-        function OperatorSubscriber4(destination, onNext, onComplete, onError, onFinalize, shouldUnsubscribe) {
-          var _this = _super.call(this, destination) || this;
-          _this.onFinalize = onFinalize;
-          _this.shouldUnsubscribe = shouldUnsubscribe;
-          _this._next = onNext ? function(value) {
-            try {
-              onNext(value);
-            } catch (err) {
-              destination.error(err);
-            }
-          } : _super.prototype._next;
-          _this._error = onError ? function(err) {
-            try {
-              onError(err);
-            } catch (err2) {
-              destination.error(err2);
-            } finally {
-              this.unsubscribe();
-            }
-          } : _super.prototype._error;
-          _this._complete = onComplete ? function() {
-            try {
-              onComplete();
-            } catch (err) {
-              destination.error(err);
-            } finally {
-              this.unsubscribe();
-            }
-          } : _super.prototype._complete;
-          return _this;
-        }
-        OperatorSubscriber4.prototype.unsubscribe = function() {
-          var _a;
-          if (!this.shouldUnsubscribe || this.shouldUnsubscribe()) {
-            var closed_1 = this.closed;
-            _super.prototype.unsubscribe.call(this);
-            !closed_1 && ((_a = this.onFinalize) === null || _a === void 0 ? void 0 : _a.call(this));
-          }
-        };
-        return OperatorSubscriber4;
-      }(Subscriber_1.Subscriber);
-      exports.OperatorSubscriber = OperatorSubscriber3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/refCount.js
-  var require_refCount = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/refCount.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.refCount = void 0;
-      var lift_1 = require_lift();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      function refCount() {
-        return lift_1.operate(function(source2, subscriber) {
-          var connection = null;
-          source2._refCount++;
-          var refCounter = OperatorSubscriber_1.createOperatorSubscriber(subscriber, void 0, void 0, void 0, function() {
-            if (!source2 || source2._refCount <= 0 || 0 < --source2._refCount) {
-              connection = null;
-              return;
-            }
-            var sharedConnection = source2._connection;
-            var conn = connection;
-            connection = null;
-            if (sharedConnection && (!conn || sharedConnection === conn)) {
-              sharedConnection.unsubscribe();
-            }
-            subscriber.unsubscribe();
-          });
-          source2.subscribe(refCounter);
-          if (!refCounter.closed) {
-            connection = source2.connect();
-          }
-        });
-      }
-      exports.refCount = refCount;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/ConnectableObservable.js
-  var require_ConnectableObservable = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/ConnectableObservable.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.ConnectableObservable = void 0;
-      var Observable_1 = require_Observable();
-      var Subscription_1 = require_Subscription();
-      var refCount_1 = require_refCount();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var lift_1 = require_lift();
-      var ConnectableObservable = function(_super) {
-        __extends3(ConnectableObservable2, _super);
-        function ConnectableObservable2(source2, subjectFactory) {
-          var _this = _super.call(this) || this;
-          _this.source = source2;
-          _this.subjectFactory = subjectFactory;
-          _this._subject = null;
-          _this._refCount = 0;
-          _this._connection = null;
-          if (lift_1.hasLift(source2)) {
-            _this.lift = source2.lift;
-          }
-          return _this;
-        }
-        ConnectableObservable2.prototype._subscribe = function(subscriber) {
-          return this.getSubject().subscribe(subscriber);
-        };
-        ConnectableObservable2.prototype.getSubject = function() {
-          var subject = this._subject;
-          if (!subject || subject.isStopped) {
-            this._subject = this.subjectFactory();
-          }
-          return this._subject;
-        };
-        ConnectableObservable2.prototype._teardown = function() {
-          this._refCount = 0;
-          var _connection = this._connection;
-          this._subject = this._connection = null;
-          _connection === null || _connection === void 0 ? void 0 : _connection.unsubscribe();
-        };
-        ConnectableObservable2.prototype.connect = function() {
-          var _this = this;
-          var connection = this._connection;
-          if (!connection) {
-            connection = this._connection = new Subscription_1.Subscription();
-            var subject_1 = this.getSubject();
-            connection.add(this.source.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subject_1, void 0, function() {
-              _this._teardown();
-              subject_1.complete();
-            }, function(err) {
-              _this._teardown();
-              subject_1.error(err);
-            }, function() {
-              return _this._teardown();
-            })));
-            if (connection.closed) {
-              this._connection = null;
-              connection = Subscription_1.Subscription.EMPTY;
-            }
-          }
-          return connection;
-        };
-        ConnectableObservable2.prototype.refCount = function() {
-          return refCount_1.refCount()(this);
-        };
-        return ConnectableObservable2;
-      }(Observable_1.Observable);
-      exports.ConnectableObservable = ConnectableObservable;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/performanceTimestampProvider.js
-  var require_performanceTimestampProvider = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/performanceTimestampProvider.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.performanceTimestampProvider = void 0;
-      exports.performanceTimestampProvider = {
-        now: function() {
-          return (exports.performanceTimestampProvider.delegate || performance).now();
-        },
-        delegate: void 0
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/animationFrameProvider.js
-  var require_animationFrameProvider = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/animationFrameProvider.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.animationFrameProvider = void 0;
-      var Subscription_1 = require_Subscription();
-      exports.animationFrameProvider = {
-        schedule: function(callback) {
-          var request = requestAnimationFrame;
-          var cancel = cancelAnimationFrame;
-          var delegate = exports.animationFrameProvider.delegate;
-          if (delegate) {
-            request = delegate.requestAnimationFrame;
-            cancel = delegate.cancelAnimationFrame;
-          }
-          var handle = request(function(timestamp) {
-            cancel = void 0;
-            callback(timestamp);
-          });
-          return new Subscription_1.Subscription(function() {
-            return cancel === null || cancel === void 0 ? void 0 : cancel(handle);
-          });
-        },
-        requestAnimationFrame: function() {
-          var args = [];
-          for (var _i = 0; _i < arguments.length; _i++) {
-            args[_i] = arguments[_i];
-          }
-          var delegate = exports.animationFrameProvider.delegate;
-          return ((delegate === null || delegate === void 0 ? void 0 : delegate.requestAnimationFrame) || requestAnimationFrame).apply(void 0, __spreadArray3([], __read3(args)));
-        },
-        cancelAnimationFrame: function() {
-          var args = [];
-          for (var _i = 0; _i < arguments.length; _i++) {
-            args[_i] = arguments[_i];
-          }
-          var delegate = exports.animationFrameProvider.delegate;
-          return ((delegate === null || delegate === void 0 ? void 0 : delegate.cancelAnimationFrame) || cancelAnimationFrame).apply(void 0, __spreadArray3([], __read3(args)));
-        },
-        delegate: void 0
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/dom/animationFrames.js
-  var require_animationFrames = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/dom/animationFrames.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.animationFrames = void 0;
-      var Observable_1 = require_Observable();
-      var performanceTimestampProvider_1 = require_performanceTimestampProvider();
-      var animationFrameProvider_1 = require_animationFrameProvider();
-      function animationFrames(timestampProvider) {
-        return timestampProvider ? animationFramesFactory(timestampProvider) : DEFAULT_ANIMATION_FRAMES;
-      }
-      exports.animationFrames = animationFrames;
-      function animationFramesFactory(timestampProvider) {
-        return new Observable_1.Observable(function(subscriber) {
-          var provider = timestampProvider || performanceTimestampProvider_1.performanceTimestampProvider;
-          var start = provider.now();
-          var id = 0;
-          var run2 = function() {
-            if (!subscriber.closed) {
-              id = animationFrameProvider_1.animationFrameProvider.requestAnimationFrame(function(timestamp) {
-                id = 0;
-                var now2 = provider.now();
-                subscriber.next({
-                  timestamp: timestampProvider ? now2 : timestamp,
-                  elapsed: now2 - start
-                });
-                run2();
-              });
-            }
-          };
-          run2();
-          return function() {
-            if (id) {
-              animationFrameProvider_1.animationFrameProvider.cancelAnimationFrame(id);
-            }
-          };
-        });
-      }
-      var DEFAULT_ANIMATION_FRAMES = animationFramesFactory();
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ObjectUnsubscribedError.js
-  var require_ObjectUnsubscribedError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ObjectUnsubscribedError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.ObjectUnsubscribedError = void 0;
-      var createErrorClass_1 = require_createErrorClass();
-      exports.ObjectUnsubscribedError = createErrorClass_1.createErrorClass(function(_super) {
-        return function ObjectUnsubscribedErrorImpl() {
-          _super(this);
-          this.name = "ObjectUnsubscribedError";
-          this.message = "object unsubscribed";
-        };
-      });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Subject.js
-  var require_Subject = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Subject.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      var __values3 = exports && exports.__values || function(o2) {
-        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
-        if (m2)
-          return m2.call(o2);
-        if (o2 && typeof o2.length === "number")
-          return {
-            next: function() {
-              if (o2 && i2 >= o2.length)
-                o2 = void 0;
-              return { value: o2 && o2[i2++], done: !o2 };
-            }
-          };
-        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AnonymousSubject = exports.Subject = void 0;
-      var Observable_1 = require_Observable();
-      var Subscription_1 = require_Subscription();
-      var ObjectUnsubscribedError_1 = require_ObjectUnsubscribedError();
-      var arrRemove_1 = require_arrRemove();
-      var errorContext_1 = require_errorContext();
-      var Subject3 = function(_super) {
-        __extends3(Subject4, _super);
-        function Subject4() {
-          var _this = _super.call(this) || this;
-          _this.closed = false;
-          _this.currentObservers = null;
-          _this.observers = [];
-          _this.isStopped = false;
-          _this.hasError = false;
-          _this.thrownError = null;
-          return _this;
-        }
-        Subject4.prototype.lift = function(operator) {
-          var subject = new AnonymousSubject3(this, this);
-          subject.operator = operator;
-          return subject;
-        };
-        Subject4.prototype._throwIfClosed = function() {
-          if (this.closed) {
-            throw new ObjectUnsubscribedError_1.ObjectUnsubscribedError();
-          }
-        };
-        Subject4.prototype.next = function(value) {
-          var _this = this;
-          errorContext_1.errorContext(function() {
-            var e_1, _a;
-            _this._throwIfClosed();
-            if (!_this.isStopped) {
-              if (!_this.currentObservers) {
-                _this.currentObservers = Array.from(_this.observers);
-              }
-              try {
-                for (var _b = __values3(_this.currentObservers), _c = _b.next(); !_c.done; _c = _b.next()) {
-                  var observer = _c.value;
-                  observer.next(value);
-                }
-              } catch (e_1_1) {
-                e_1 = { error: e_1_1 };
-              } finally {
-                try {
-                  if (_c && !_c.done && (_a = _b.return))
-                    _a.call(_b);
-                } finally {
-                  if (e_1)
-                    throw e_1.error;
-                }
-              }
-            }
-          });
-        };
-        Subject4.prototype.error = function(err) {
-          var _this = this;
-          errorContext_1.errorContext(function() {
-            _this._throwIfClosed();
-            if (!_this.isStopped) {
-              _this.hasError = _this.isStopped = true;
-              _this.thrownError = err;
-              var observers = _this.observers;
-              while (observers.length) {
-                observers.shift().error(err);
-              }
-            }
-          });
-        };
-        Subject4.prototype.complete = function() {
-          var _this = this;
-          errorContext_1.errorContext(function() {
-            _this._throwIfClosed();
-            if (!_this.isStopped) {
-              _this.isStopped = true;
-              var observers = _this.observers;
-              while (observers.length) {
-                observers.shift().complete();
-              }
-            }
-          });
-        };
-        Subject4.prototype.unsubscribe = function() {
-          this.isStopped = this.closed = true;
-          this.observers = this.currentObservers = null;
-        };
-        Object.defineProperty(Subject4.prototype, "observed", {
-          get: function() {
-            var _a;
-            return ((_a = this.observers) === null || _a === void 0 ? void 0 : _a.length) > 0;
-          },
-          enumerable: false,
-          configurable: true
-        });
-        Subject4.prototype._trySubscribe = function(subscriber) {
-          this._throwIfClosed();
-          return _super.prototype._trySubscribe.call(this, subscriber);
-        };
-        Subject4.prototype._subscribe = function(subscriber) {
-          this._throwIfClosed();
-          this._checkFinalizedStatuses(subscriber);
-          return this._innerSubscribe(subscriber);
-        };
-        Subject4.prototype._innerSubscribe = function(subscriber) {
-          var _this = this;
-          var _a = this, hasError = _a.hasError, isStopped = _a.isStopped, observers = _a.observers;
-          if (hasError || isStopped) {
-            return Subscription_1.EMPTY_SUBSCRIPTION;
-          }
-          this.currentObservers = null;
-          observers.push(subscriber);
-          return new Subscription_1.Subscription(function() {
-            _this.currentObservers = null;
-            arrRemove_1.arrRemove(observers, subscriber);
-          });
-        };
-        Subject4.prototype._checkFinalizedStatuses = function(subscriber) {
-          var _a = this, hasError = _a.hasError, thrownError = _a.thrownError, isStopped = _a.isStopped;
-          if (hasError) {
-            subscriber.error(thrownError);
-          } else if (isStopped) {
-            subscriber.complete();
-          }
-        };
-        Subject4.prototype.asObservable = function() {
-          var observable3 = new Observable_1.Observable();
-          observable3.source = this;
-          return observable3;
-        };
-        Subject4.create = function(destination, source2) {
-          return new AnonymousSubject3(destination, source2);
-        };
-        return Subject4;
-      }(Observable_1.Observable);
-      exports.Subject = Subject3;
-      var AnonymousSubject3 = function(_super) {
-        __extends3(AnonymousSubject4, _super);
-        function AnonymousSubject4(destination, source2) {
-          var _this = _super.call(this) || this;
-          _this.destination = destination;
-          _this.source = source2;
-          return _this;
-        }
-        AnonymousSubject4.prototype.next = function(value) {
-          var _a, _b;
-          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.next) === null || _b === void 0 ? void 0 : _b.call(_a, value);
-        };
-        AnonymousSubject4.prototype.error = function(err) {
-          var _a, _b;
-          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.error) === null || _b === void 0 ? void 0 : _b.call(_a, err);
-        };
-        AnonymousSubject4.prototype.complete = function() {
-          var _a, _b;
-          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.complete) === null || _b === void 0 ? void 0 : _b.call(_a);
-        };
-        AnonymousSubject4.prototype._subscribe = function(subscriber) {
-          var _a, _b;
-          return (_b = (_a = this.source) === null || _a === void 0 ? void 0 : _a.subscribe(subscriber)) !== null && _b !== void 0 ? _b : Subscription_1.EMPTY_SUBSCRIPTION;
-        };
-        return AnonymousSubject4;
-      }(Subject3);
-      exports.AnonymousSubject = AnonymousSubject3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/BehaviorSubject.js
-  var require_BehaviorSubject = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/BehaviorSubject.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.BehaviorSubject = void 0;
-      var Subject_1 = require_Subject();
-      var BehaviorSubject = function(_super) {
-        __extends3(BehaviorSubject2, _super);
-        function BehaviorSubject2(_value) {
-          var _this = _super.call(this) || this;
-          _this._value = _value;
-          return _this;
-        }
-        Object.defineProperty(BehaviorSubject2.prototype, "value", {
-          get: function() {
-            return this.getValue();
-          },
-          enumerable: false,
-          configurable: true
-        });
-        BehaviorSubject2.prototype._subscribe = function(subscriber) {
-          var subscription = _super.prototype._subscribe.call(this, subscriber);
-          !subscription.closed && subscriber.next(this._value);
-          return subscription;
-        };
-        BehaviorSubject2.prototype.getValue = function() {
-          var _a = this, hasError = _a.hasError, thrownError = _a.thrownError, _value = _a._value;
-          if (hasError) {
-            throw thrownError;
-          }
-          this._throwIfClosed();
-          return _value;
-        };
-        BehaviorSubject2.prototype.next = function(value) {
-          _super.prototype.next.call(this, this._value = value);
-        };
-        return BehaviorSubject2;
-      }(Subject_1.Subject);
-      exports.BehaviorSubject = BehaviorSubject;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/dateTimestampProvider.js
-  var require_dateTimestampProvider = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/dateTimestampProvider.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.dateTimestampProvider = void 0;
-      exports.dateTimestampProvider = {
-        now: function() {
-          return (exports.dateTimestampProvider.delegate || Date).now();
-        },
-        delegate: void 0
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/ReplaySubject.js
-  var require_ReplaySubject = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/ReplaySubject.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.ReplaySubject = void 0;
-      var Subject_1 = require_Subject();
-      var dateTimestampProvider_1 = require_dateTimestampProvider();
-      var ReplaySubject = function(_super) {
-        __extends3(ReplaySubject2, _super);
-        function ReplaySubject2(_bufferSize, _windowTime, _timestampProvider) {
-          if (_bufferSize === void 0) {
-            _bufferSize = Infinity;
-          }
-          if (_windowTime === void 0) {
-            _windowTime = Infinity;
-          }
-          if (_timestampProvider === void 0) {
-            _timestampProvider = dateTimestampProvider_1.dateTimestampProvider;
-          }
-          var _this = _super.call(this) || this;
-          _this._bufferSize = _bufferSize;
-          _this._windowTime = _windowTime;
-          _this._timestampProvider = _timestampProvider;
-          _this._buffer = [];
-          _this._infiniteTimeWindow = true;
-          _this._infiniteTimeWindow = _windowTime === Infinity;
-          _this._bufferSize = Math.max(1, _bufferSize);
-          _this._windowTime = Math.max(1, _windowTime);
-          return _this;
-        }
-        ReplaySubject2.prototype.next = function(value) {
-          var _a = this, isStopped = _a.isStopped, _buffer = _a._buffer, _infiniteTimeWindow = _a._infiniteTimeWindow, _timestampProvider = _a._timestampProvider, _windowTime = _a._windowTime;
-          if (!isStopped) {
-            _buffer.push(value);
-            !_infiniteTimeWindow && _buffer.push(_timestampProvider.now() + _windowTime);
-          }
-          this._trimBuffer();
-          _super.prototype.next.call(this, value);
-        };
-        ReplaySubject2.prototype._subscribe = function(subscriber) {
-          this._throwIfClosed();
-          this._trimBuffer();
-          var subscription = this._innerSubscribe(subscriber);
-          var _a = this, _infiniteTimeWindow = _a._infiniteTimeWindow, _buffer = _a._buffer;
-          var copy = _buffer.slice();
-          for (var i2 = 0; i2 < copy.length && !subscriber.closed; i2 += _infiniteTimeWindow ? 1 : 2) {
-            subscriber.next(copy[i2]);
-          }
-          this._checkFinalizedStatuses(subscriber);
-          return subscription;
-        };
-        ReplaySubject2.prototype._trimBuffer = function() {
-          var _a = this, _bufferSize = _a._bufferSize, _timestampProvider = _a._timestampProvider, _buffer = _a._buffer, _infiniteTimeWindow = _a._infiniteTimeWindow;
-          var adjustedBufferSize = (_infiniteTimeWindow ? 1 : 2) * _bufferSize;
-          _bufferSize < Infinity && adjustedBufferSize < _buffer.length && _buffer.splice(0, _buffer.length - adjustedBufferSize);
-          if (!_infiniteTimeWindow) {
-            var now2 = _timestampProvider.now();
-            var last3 = 0;
-            for (var i2 = 1; i2 < _buffer.length && _buffer[i2] <= now2; i2 += 2) {
-              last3 = i2;
-            }
-            last3 && _buffer.splice(0, last3 + 1);
-          }
-        };
-        return ReplaySubject2;
-      }(Subject_1.Subject);
-      exports.ReplaySubject = ReplaySubject;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/AsyncSubject.js
-  var require_AsyncSubject = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/AsyncSubject.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AsyncSubject = void 0;
-      var Subject_1 = require_Subject();
-      var AsyncSubject = function(_super) {
-        __extends3(AsyncSubject2, _super);
-        function AsyncSubject2() {
-          var _this = _super !== null && _super.apply(this, arguments) || this;
-          _this._value = null;
-          _this._hasValue = false;
-          _this._isComplete = false;
-          return _this;
-        }
-        AsyncSubject2.prototype._checkFinalizedStatuses = function(subscriber) {
-          var _a = this, hasError = _a.hasError, _hasValue = _a._hasValue, _value = _a._value, thrownError = _a.thrownError, isStopped = _a.isStopped, _isComplete = _a._isComplete;
-          if (hasError) {
-            subscriber.error(thrownError);
-          } else if (isStopped || _isComplete) {
-            _hasValue && subscriber.next(_value);
-            subscriber.complete();
-          }
-        };
-        AsyncSubject2.prototype.next = function(value) {
-          if (!this.isStopped) {
-            this._value = value;
-            this._hasValue = true;
-          }
-        };
-        AsyncSubject2.prototype.complete = function() {
-          var _a = this, _hasValue = _a._hasValue, _value = _a._value, _isComplete = _a._isComplete;
-          if (!_isComplete) {
-            this._isComplete = true;
-            _hasValue && _super.prototype.next.call(this, _value);
-            _super.prototype.complete.call(this);
-          }
-        };
-        return AsyncSubject2;
-      }(Subject_1.Subject);
-      exports.AsyncSubject = AsyncSubject;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/Action.js
-  var require_Action = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/Action.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.Action = void 0;
-      var Subscription_1 = require_Subscription();
-      var Action2 = function(_super) {
-        __extends3(Action3, _super);
-        function Action3(scheduler, work) {
-          return _super.call(this) || this;
-        }
-        Action3.prototype.schedule = function(state, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          return this;
-        };
-        return Action3;
-      }(Subscription_1.Subscription);
-      exports.Action = Action2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/intervalProvider.js
-  var require_intervalProvider = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/intervalProvider.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.intervalProvider = void 0;
-      exports.intervalProvider = {
-        setInterval: function(handler, timeout) {
-          var args = [];
-          for (var _i = 2; _i < arguments.length; _i++) {
-            args[_i - 2] = arguments[_i];
-          }
-          var delegate = exports.intervalProvider.delegate;
-          if (delegate === null || delegate === void 0 ? void 0 : delegate.setInterval) {
-            return delegate.setInterval.apply(delegate, __spreadArray3([handler, timeout], __read3(args)));
-          }
-          return setInterval.apply(void 0, __spreadArray3([handler, timeout], __read3(args)));
-        },
-        clearInterval: function(handle) {
-          var delegate = exports.intervalProvider.delegate;
-          return ((delegate === null || delegate === void 0 ? void 0 : delegate.clearInterval) || clearInterval)(handle);
-        },
-        delegate: void 0
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncAction.js
-  var require_AsyncAction = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncAction.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AsyncAction = void 0;
-      var Action_1 = require_Action();
-      var intervalProvider_1 = require_intervalProvider();
-      var arrRemove_1 = require_arrRemove();
-      var AsyncAction2 = function(_super) {
-        __extends3(AsyncAction3, _super);
-        function AsyncAction3(scheduler, work) {
-          var _this = _super.call(this, scheduler, work) || this;
-          _this.scheduler = scheduler;
-          _this.work = work;
-          _this.pending = false;
-          return _this;
-        }
-        AsyncAction3.prototype.schedule = function(state, delay) {
-          var _a;
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (this.closed) {
-            return this;
-          }
-          this.state = state;
-          var id = this.id;
-          var scheduler = this.scheduler;
-          if (id != null) {
-            this.id = this.recycleAsyncId(scheduler, id, delay);
-          }
-          this.pending = true;
-          this.delay = delay;
-          this.id = (_a = this.id) !== null && _a !== void 0 ? _a : this.requestAsyncId(scheduler, this.id, delay);
-          return this;
-        };
-        AsyncAction3.prototype.requestAsyncId = function(scheduler, _id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          return intervalProvider_1.intervalProvider.setInterval(scheduler.flush.bind(scheduler, this), delay);
-        };
-        AsyncAction3.prototype.recycleAsyncId = function(_scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay != null && this.delay === delay && this.pending === false) {
-            return id;
-          }
-          if (id != null) {
-            intervalProvider_1.intervalProvider.clearInterval(id);
-          }
-          return void 0;
-        };
-        AsyncAction3.prototype.execute = function(state, delay) {
-          if (this.closed) {
-            return new Error("executing a cancelled action");
-          }
-          this.pending = false;
-          var error = this._execute(state, delay);
-          if (error) {
-            return error;
-          } else if (this.pending === false && this.id != null) {
-            this.id = this.recycleAsyncId(this.scheduler, this.id, null);
-          }
-        };
-        AsyncAction3.prototype._execute = function(state, _delay) {
-          var errored = false;
-          var errorValue;
-          try {
-            this.work(state);
-          } catch (e2) {
-            errored = true;
-            errorValue = e2 ? e2 : new Error("Scheduled action threw falsy error");
-          }
-          if (errored) {
-            this.unsubscribe();
-            return errorValue;
-          }
-        };
-        AsyncAction3.prototype.unsubscribe = function() {
-          if (!this.closed) {
-            var _a = this, id = _a.id, scheduler = _a.scheduler;
-            var actions = scheduler.actions;
-            this.work = this.state = this.scheduler = null;
-            this.pending = false;
-            arrRemove_1.arrRemove(actions, this);
-            if (id != null) {
-              this.id = this.recycleAsyncId(scheduler, id, null);
-            }
-            this.delay = null;
-            _super.prototype.unsubscribe.call(this);
-          }
-        };
-        return AsyncAction3;
-      }(Action_1.Action);
-      exports.AsyncAction = AsyncAction2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/Immediate.js
-  var require_Immediate = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/Immediate.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.TestTools = exports.Immediate = void 0;
-      var nextHandle = 1;
-      var resolved;
-      var activeHandles = {};
-      function findAndClearHandle(handle) {
-        if (handle in activeHandles) {
-          delete activeHandles[handle];
-          return true;
-        }
-        return false;
-      }
-      exports.Immediate = {
-        setImmediate: function(cb) {
-          var handle = nextHandle++;
-          activeHandles[handle] = true;
-          if (!resolved) {
-            resolved = Promise.resolve();
-          }
-          resolved.then(function() {
-            return findAndClearHandle(handle) && cb();
-          });
-          return handle;
-        },
-        clearImmediate: function(handle) {
-          findAndClearHandle(handle);
-        }
-      };
-      exports.TestTools = {
-        pending: function() {
-          return Object.keys(activeHandles).length;
-        }
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/immediateProvider.js
-  var require_immediateProvider = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/immediateProvider.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.immediateProvider = void 0;
-      var Immediate_1 = require_Immediate();
-      var setImmediate = Immediate_1.Immediate.setImmediate;
-      var clearImmediate = Immediate_1.Immediate.clearImmediate;
-      exports.immediateProvider = {
-        setImmediate: function() {
-          var args = [];
-          for (var _i = 0; _i < arguments.length; _i++) {
-            args[_i] = arguments[_i];
-          }
-          var delegate = exports.immediateProvider.delegate;
-          return ((delegate === null || delegate === void 0 ? void 0 : delegate.setImmediate) || setImmediate).apply(void 0, __spreadArray3([], __read3(args)));
-        },
-        clearImmediate: function(handle) {
-          var delegate = exports.immediateProvider.delegate;
-          return ((delegate === null || delegate === void 0 ? void 0 : delegate.clearImmediate) || clearImmediate)(handle);
-        },
-        delegate: void 0
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsapAction.js
-  var require_AsapAction = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsapAction.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AsapAction = void 0;
-      var AsyncAction_1 = require_AsyncAction();
-      var immediateProvider_1 = require_immediateProvider();
-      var AsapAction = function(_super) {
-        __extends3(AsapAction2, _super);
-        function AsapAction2(scheduler, work) {
-          var _this = _super.call(this, scheduler, work) || this;
-          _this.scheduler = scheduler;
-          _this.work = work;
-          return _this;
-        }
-        AsapAction2.prototype.requestAsyncId = function(scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay !== null && delay > 0) {
-            return _super.prototype.requestAsyncId.call(this, scheduler, id, delay);
-          }
-          scheduler.actions.push(this);
-          return scheduler._scheduled || (scheduler._scheduled = immediateProvider_1.immediateProvider.setImmediate(scheduler.flush.bind(scheduler, void 0)));
-        };
-        AsapAction2.prototype.recycleAsyncId = function(scheduler, id, delay) {
-          var _a;
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay != null ? delay > 0 : this.delay > 0) {
-            return _super.prototype.recycleAsyncId.call(this, scheduler, id, delay);
-          }
-          var actions = scheduler.actions;
-          if (id != null && ((_a = actions[actions.length - 1]) === null || _a === void 0 ? void 0 : _a.id) !== id) {
-            immediateProvider_1.immediateProvider.clearImmediate(id);
-            if (scheduler._scheduled === id) {
-              scheduler._scheduled = void 0;
-            }
-          }
-          return void 0;
-        };
-        return AsapAction2;
-      }(AsyncAction_1.AsyncAction);
-      exports.AsapAction = AsapAction;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Scheduler.js
-  var require_Scheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Scheduler.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.Scheduler = void 0;
-      var dateTimestampProvider_1 = require_dateTimestampProvider();
-      var Scheduler2 = function() {
-        function Scheduler3(schedulerActionCtor, now2) {
-          if (now2 === void 0) {
-            now2 = Scheduler3.now;
-          }
-          this.schedulerActionCtor = schedulerActionCtor;
-          this.now = now2;
-        }
-        Scheduler3.prototype.schedule = function(work, delay, state) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          return new this.schedulerActionCtor(this, work).schedule(state, delay);
-        };
-        Scheduler3.now = dateTimestampProvider_1.dateTimestampProvider.now;
-        return Scheduler3;
-      }();
-      exports.Scheduler = Scheduler2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncScheduler.js
-  var require_AsyncScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncScheduler.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AsyncScheduler = void 0;
-      var Scheduler_1 = require_Scheduler();
-      var AsyncScheduler2 = function(_super) {
-        __extends3(AsyncScheduler3, _super);
-        function AsyncScheduler3(SchedulerAction, now2) {
-          if (now2 === void 0) {
-            now2 = Scheduler_1.Scheduler.now;
-          }
-          var _this = _super.call(this, SchedulerAction, now2) || this;
-          _this.actions = [];
-          _this._active = false;
-          return _this;
-        }
-        AsyncScheduler3.prototype.flush = function(action) {
-          var actions = this.actions;
-          if (this._active) {
-            actions.push(action);
-            return;
-          }
-          var error;
-          this._active = true;
-          do {
-            if (error = action.execute(action.state, action.delay)) {
-              break;
-            }
-          } while (action = actions.shift());
-          this._active = false;
-          if (error) {
-            while (action = actions.shift()) {
-              action.unsubscribe();
-            }
-            throw error;
-          }
-        };
-        return AsyncScheduler3;
-      }(Scheduler_1.Scheduler);
-      exports.AsyncScheduler = AsyncScheduler2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsapScheduler.js
-  var require_AsapScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsapScheduler.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AsapScheduler = void 0;
-      var AsyncScheduler_1 = require_AsyncScheduler();
-      var AsapScheduler = function(_super) {
-        __extends3(AsapScheduler2, _super);
-        function AsapScheduler2() {
-          return _super !== null && _super.apply(this, arguments) || this;
-        }
-        AsapScheduler2.prototype.flush = function(action) {
-          this._active = true;
-          var flushId = this._scheduled;
-          this._scheduled = void 0;
-          var actions = this.actions;
-          var error;
-          action = action || actions.shift();
-          do {
-            if (error = action.execute(action.state, action.delay)) {
-              break;
-            }
-          } while ((action = actions[0]) && action.id === flushId && actions.shift());
-          this._active = false;
-          if (error) {
-            while ((action = actions[0]) && action.id === flushId && actions.shift()) {
-              action.unsubscribe();
-            }
-            throw error;
-          }
-        };
-        return AsapScheduler2;
-      }(AsyncScheduler_1.AsyncScheduler);
-      exports.AsapScheduler = AsapScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/asap.js
-  var require_asap = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/asap.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.asap = exports.asapScheduler = void 0;
-      var AsapAction_1 = require_AsapAction();
-      var AsapScheduler_1 = require_AsapScheduler();
-      exports.asapScheduler = new AsapScheduler_1.AsapScheduler(AsapAction_1.AsapAction);
-      exports.asap = exports.asapScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/async.js
-  var require_async = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/async.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.async = exports.asyncScheduler = void 0;
-      var AsyncAction_1 = require_AsyncAction();
-      var AsyncScheduler_1 = require_AsyncScheduler();
-      exports.asyncScheduler = new AsyncScheduler_1.AsyncScheduler(AsyncAction_1.AsyncAction);
-      exports.async = exports.asyncScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/QueueAction.js
-  var require_QueueAction = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/QueueAction.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.QueueAction = void 0;
-      var AsyncAction_1 = require_AsyncAction();
-      var QueueAction = function(_super) {
-        __extends3(QueueAction2, _super);
-        function QueueAction2(scheduler, work) {
-          var _this = _super.call(this, scheduler, work) || this;
-          _this.scheduler = scheduler;
-          _this.work = work;
-          return _this;
-        }
-        QueueAction2.prototype.schedule = function(state, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay > 0) {
-            return _super.prototype.schedule.call(this, state, delay);
-          }
-          this.delay = delay;
-          this.state = state;
-          this.scheduler.flush(this);
-          return this;
-        };
-        QueueAction2.prototype.execute = function(state, delay) {
-          return delay > 0 || this.closed ? _super.prototype.execute.call(this, state, delay) : this._execute(state, delay);
-        };
-        QueueAction2.prototype.requestAsyncId = function(scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay != null && delay > 0 || delay == null && this.delay > 0) {
-            return _super.prototype.requestAsyncId.call(this, scheduler, id, delay);
-          }
-          scheduler.flush(this);
-          return 0;
-        };
-        return QueueAction2;
-      }(AsyncAction_1.AsyncAction);
-      exports.QueueAction = QueueAction;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/QueueScheduler.js
-  var require_QueueScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/QueueScheduler.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.QueueScheduler = void 0;
-      var AsyncScheduler_1 = require_AsyncScheduler();
-      var QueueScheduler = function(_super) {
-        __extends3(QueueScheduler2, _super);
-        function QueueScheduler2() {
-          return _super !== null && _super.apply(this, arguments) || this;
-        }
-        return QueueScheduler2;
-      }(AsyncScheduler_1.AsyncScheduler);
-      exports.QueueScheduler = QueueScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/queue.js
-  var require_queue = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/queue.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.queue = exports.queueScheduler = void 0;
-      var QueueAction_1 = require_QueueAction();
-      var QueueScheduler_1 = require_QueueScheduler();
-      exports.queueScheduler = new QueueScheduler_1.QueueScheduler(QueueAction_1.QueueAction);
-      exports.queue = exports.queueScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AnimationFrameAction.js
-  var require_AnimationFrameAction = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AnimationFrameAction.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AnimationFrameAction = void 0;
-      var AsyncAction_1 = require_AsyncAction();
-      var animationFrameProvider_1 = require_animationFrameProvider();
-      var AnimationFrameAction = function(_super) {
-        __extends3(AnimationFrameAction2, _super);
-        function AnimationFrameAction2(scheduler, work) {
-          var _this = _super.call(this, scheduler, work) || this;
-          _this.scheduler = scheduler;
-          _this.work = work;
-          return _this;
-        }
-        AnimationFrameAction2.prototype.requestAsyncId = function(scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay !== null && delay > 0) {
-            return _super.prototype.requestAsyncId.call(this, scheduler, id, delay);
-          }
-          scheduler.actions.push(this);
-          return scheduler._scheduled || (scheduler._scheduled = animationFrameProvider_1.animationFrameProvider.requestAnimationFrame(function() {
-            return scheduler.flush(void 0);
-          }));
-        };
-        AnimationFrameAction2.prototype.recycleAsyncId = function(scheduler, id, delay) {
-          var _a;
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (delay != null ? delay > 0 : this.delay > 0) {
-            return _super.prototype.recycleAsyncId.call(this, scheduler, id, delay);
-          }
-          var actions = scheduler.actions;
-          if (id != null && ((_a = actions[actions.length - 1]) === null || _a === void 0 ? void 0 : _a.id) !== id) {
-            animationFrameProvider_1.animationFrameProvider.cancelAnimationFrame(id);
-            scheduler._scheduled = void 0;
-          }
-          return void 0;
-        };
-        return AnimationFrameAction2;
-      }(AsyncAction_1.AsyncAction);
-      exports.AnimationFrameAction = AnimationFrameAction;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AnimationFrameScheduler.js
-  var require_AnimationFrameScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AnimationFrameScheduler.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.AnimationFrameScheduler = void 0;
-      var AsyncScheduler_1 = require_AsyncScheduler();
-      var AnimationFrameScheduler = function(_super) {
-        __extends3(AnimationFrameScheduler2, _super);
-        function AnimationFrameScheduler2() {
-          return _super !== null && _super.apply(this, arguments) || this;
-        }
-        AnimationFrameScheduler2.prototype.flush = function(action) {
-          this._active = true;
-          var flushId = this._scheduled;
-          this._scheduled = void 0;
-          var actions = this.actions;
-          var error;
-          action = action || actions.shift();
-          do {
-            if (error = action.execute(action.state, action.delay)) {
-              break;
-            }
-          } while ((action = actions[0]) && action.id === flushId && actions.shift());
-          this._active = false;
-          if (error) {
-            while ((action = actions[0]) && action.id === flushId && actions.shift()) {
-              action.unsubscribe();
-            }
-            throw error;
-          }
-        };
-        return AnimationFrameScheduler2;
-      }(AsyncScheduler_1.AsyncScheduler);
-      exports.AnimationFrameScheduler = AnimationFrameScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/animationFrame.js
-  var require_animationFrame = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/animationFrame.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.animationFrame = exports.animationFrameScheduler = void 0;
-      var AnimationFrameAction_1 = require_AnimationFrameAction();
-      var AnimationFrameScheduler_1 = require_AnimationFrameScheduler();
-      exports.animationFrameScheduler = new AnimationFrameScheduler_1.AnimationFrameScheduler(AnimationFrameAction_1.AnimationFrameAction);
-      exports.animationFrame = exports.animationFrameScheduler;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/VirtualTimeScheduler.js
-  var require_VirtualTimeScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/VirtualTimeScheduler.js"(exports) {
-      "use strict";
-      var __extends3 = exports && exports.__extends || function() {
-        var extendStatics3 = function(d2, b2) {
-          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
-            d3.__proto__ = b3;
-          } || function(d3, b3) {
-            for (var p2 in b3)
-              if (Object.prototype.hasOwnProperty.call(b3, p2))
-                d3[p2] = b3[p2];
-          };
-          return extendStatics3(d2, b2);
-        };
-        return function(d2, b2) {
-          if (typeof b2 !== "function" && b2 !== null)
-            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
-          extendStatics3(d2, b2);
-          function __() {
-            this.constructor = d2;
-          }
-          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
-        };
-      }();
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.VirtualAction = exports.VirtualTimeScheduler = void 0;
-      var AsyncAction_1 = require_AsyncAction();
-      var Subscription_1 = require_Subscription();
-      var AsyncScheduler_1 = require_AsyncScheduler();
-      var VirtualTimeScheduler = function(_super) {
-        __extends3(VirtualTimeScheduler2, _super);
-        function VirtualTimeScheduler2(schedulerActionCtor, maxFrames) {
-          if (schedulerActionCtor === void 0) {
-            schedulerActionCtor = VirtualAction;
-          }
-          if (maxFrames === void 0) {
-            maxFrames = Infinity;
-          }
-          var _this = _super.call(this, schedulerActionCtor, function() {
-            return _this.frame;
-          }) || this;
-          _this.maxFrames = maxFrames;
-          _this.frame = 0;
-          _this.index = -1;
-          return _this;
-        }
-        VirtualTimeScheduler2.prototype.flush = function() {
-          var _a = this, actions = _a.actions, maxFrames = _a.maxFrames;
-          var error;
-          var action;
-          while ((action = actions[0]) && action.delay <= maxFrames) {
-            actions.shift();
-            this.frame = action.delay;
-            if (error = action.execute(action.state, action.delay)) {
-              break;
-            }
-          }
-          if (error) {
-            while (action = actions.shift()) {
-              action.unsubscribe();
-            }
-            throw error;
-          }
-        };
-        VirtualTimeScheduler2.frameTimeFactor = 10;
-        return VirtualTimeScheduler2;
-      }(AsyncScheduler_1.AsyncScheduler);
-      exports.VirtualTimeScheduler = VirtualTimeScheduler;
-      var VirtualAction = function(_super) {
-        __extends3(VirtualAction2, _super);
-        function VirtualAction2(scheduler, work, index) {
-          if (index === void 0) {
-            index = scheduler.index += 1;
-          }
-          var _this = _super.call(this, scheduler, work) || this;
-          _this.scheduler = scheduler;
-          _this.work = work;
-          _this.index = index;
-          _this.active = true;
-          _this.index = scheduler.index = index;
-          return _this;
-        }
-        VirtualAction2.prototype.schedule = function(state, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          if (Number.isFinite(delay)) {
-            if (!this.id) {
-              return _super.prototype.schedule.call(this, state, delay);
-            }
-            this.active = false;
-            var action = new VirtualAction2(this.scheduler, this.work);
-            this.add(action);
-            return action.schedule(state, delay);
-          } else {
-            return Subscription_1.Subscription.EMPTY;
-          }
-        };
-        VirtualAction2.prototype.requestAsyncId = function(scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          this.delay = scheduler.frame + delay;
-          var actions = scheduler.actions;
-          actions.push(this);
-          actions.sort(VirtualAction2.sortActions);
-          return 1;
-        };
-        VirtualAction2.prototype.recycleAsyncId = function(scheduler, id, delay) {
-          if (delay === void 0) {
-            delay = 0;
-          }
-          return void 0;
-        };
-        VirtualAction2.prototype._execute = function(state, delay) {
-          if (this.active === true) {
-            return _super.prototype._execute.call(this, state, delay);
-          }
-        };
-        VirtualAction2.sortActions = function(a2, b2) {
-          if (a2.delay === b2.delay) {
-            if (a2.index === b2.index) {
-              return 0;
-            } else if (a2.index > b2.index) {
-              return 1;
-            } else {
-              return -1;
-            }
-          } else if (a2.delay > b2.delay) {
-            return 1;
-          } else {
-            return -1;
-          }
-        };
-        return VirtualAction2;
-      }(AsyncAction_1.AsyncAction);
-      exports.VirtualAction = VirtualAction;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/empty.js
-  var require_empty = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/empty.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.empty = exports.EMPTY = void 0;
-      var Observable_1 = require_Observable();
-      exports.EMPTY = new Observable_1.Observable(function(subscriber) {
-        return subscriber.complete();
-      });
-      function empty(scheduler) {
-        return scheduler ? emptyScheduled(scheduler) : exports.EMPTY;
-      }
-      exports.empty = empty;
-      function emptyScheduled(scheduler) {
-        return new Observable_1.Observable(function(subscriber) {
-          return scheduler.schedule(function() {
-            return subscriber.complete();
-          });
-        });
-      }
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isScheduler.js
-  var require_isScheduler = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isScheduler.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.isScheduler = void 0;
-      var isFunction_1 = require_isFunction();
-      function isScheduler3(value) {
-        return value && isFunction_1.isFunction(value.schedule);
-      }
-      exports.isScheduler = isScheduler3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/args.js
-  var require_args = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/args.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.popNumber = exports.popScheduler = exports.popResultSelector = void 0;
-      var isFunction_1 = require_isFunction();
-      var isScheduler_1 = require_isScheduler();
-      function last3(arr) {
-        return arr[arr.length - 1];
-      }
-      function popResultSelector3(args) {
-        return isFunction_1.isFunction(last3(args)) ? args.pop() : void 0;
-      }
-      exports.popResultSelector = popResultSelector3;
-      function popScheduler3(args) {
-        return isScheduler_1.isScheduler(last3(args)) ? args.pop() : void 0;
-      }
-      exports.popScheduler = popScheduler3;
-      function popNumber3(args, defaultValue2) {
-        return typeof last3(args) === "number" ? args.pop() : defaultValue2;
-      }
-      exports.popNumber = popNumber3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isArrayLike.js
-  var require_isArrayLike = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isArrayLike.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.isArrayLike = void 0;
-      exports.isArrayLike = function(x2) {
-        return x2 && typeof x2.length === "number" && typeof x2 !== "function";
-      };
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isPromise.js
-  var require_isPromise = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isPromise.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.isPromise = void 0;
-      var isFunction_1 = require_isFunction();
-      function isPromise3(value) {
-        return isFunction_1.isFunction(value === null || value === void 0 ? void 0 : value.then);
-      }
-      exports.isPromise = isPromise3;
-    }
-  });
-
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isInteropObservable.js
   var require_isInteropObservable = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isInteropObservable.js"(exports) {
@@ -37935,6 +37661,731 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/OperatorSubscriber.js
+  var require_OperatorSubscriber = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/OperatorSubscriber.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.OperatorSubscriber = exports.createOperatorSubscriber = void 0;
+      var Subscriber_1 = require_Subscriber();
+      function createOperatorSubscriber3(destination, onNext, onComplete, onError, onFinalize) {
+        return new OperatorSubscriber3(destination, onNext, onComplete, onError, onFinalize);
+      }
+      exports.createOperatorSubscriber = createOperatorSubscriber3;
+      var OperatorSubscriber3 = function(_super) {
+        __extends3(OperatorSubscriber4, _super);
+        function OperatorSubscriber4(destination, onNext, onComplete, onError, onFinalize, shouldUnsubscribe) {
+          var _this = _super.call(this, destination) || this;
+          _this.onFinalize = onFinalize;
+          _this.shouldUnsubscribe = shouldUnsubscribe;
+          _this._next = onNext ? function(value) {
+            try {
+              onNext(value);
+            } catch (err) {
+              destination.error(err);
+            }
+          } : _super.prototype._next;
+          _this._error = onError ? function(err) {
+            try {
+              onError(err);
+            } catch (err2) {
+              destination.error(err2);
+            } finally {
+              this.unsubscribe();
+            }
+          } : _super.prototype._error;
+          _this._complete = onComplete ? function() {
+            try {
+              onComplete();
+            } catch (err) {
+              destination.error(err);
+            } finally {
+              this.unsubscribe();
+            }
+          } : _super.prototype._complete;
+          return _this;
+        }
+        OperatorSubscriber4.prototype.unsubscribe = function() {
+          var _a;
+          if (!this.shouldUnsubscribe || this.shouldUnsubscribe()) {
+            var closed_1 = this.closed;
+            _super.prototype.unsubscribe.call(this);
+            !closed_1 && ((_a = this.onFinalize) === null || _a === void 0 ? void 0 : _a.call(this));
+          }
+        };
+        return OperatorSubscriber4;
+      }(Subscriber_1.Subscriber);
+      exports.OperatorSubscriber = OperatorSubscriber3;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/audit.js
+  var require_audit = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/audit.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.audit = void 0;
+      var lift_1 = require_lift();
+      var innerFrom_1 = require_innerFrom();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      function audit(durationSelector) {
+        return lift_1.operate(function(source2, subscriber) {
+          var hasValue = false;
+          var lastValue = null;
+          var durationSubscriber = null;
+          var isComplete = false;
+          var endDuration = function() {
+            durationSubscriber === null || durationSubscriber === void 0 ? void 0 : durationSubscriber.unsubscribe();
+            durationSubscriber = null;
+            if (hasValue) {
+              hasValue = false;
+              var value = lastValue;
+              lastValue = null;
+              subscriber.next(value);
+            }
+            isComplete && subscriber.complete();
+          };
+          var cleanupDuration = function() {
+            durationSubscriber = null;
+            isComplete && subscriber.complete();
+          };
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            hasValue = true;
+            lastValue = value;
+            if (!durationSubscriber) {
+              innerFrom_1.innerFrom(durationSelector(value)).subscribe(durationSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, endDuration, cleanupDuration));
+            }
+          }, function() {
+            isComplete = true;
+            (!hasValue || !durationSubscriber || durationSubscriber.closed) && subscriber.complete();
+          }));
+        });
+      }
+      exports.audit = audit;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/Action.js
+  var require_Action = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/Action.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.Action = void 0;
+      var Subscription_1 = require_Subscription();
+      var Action2 = function(_super) {
+        __extends3(Action3, _super);
+        function Action3(scheduler, work) {
+          return _super.call(this) || this;
+        }
+        Action3.prototype.schedule = function(state, delay) {
+          if (delay === void 0) {
+            delay = 0;
+          }
+          return this;
+        };
+        return Action3;
+      }(Subscription_1.Subscription);
+      exports.Action = Action2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/intervalProvider.js
+  var require_intervalProvider = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/intervalProvider.js"(exports) {
+      "use strict";
+      var __read3 = exports && exports.__read || function(o2, n2) {
+        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
+        if (!m2)
+          return o2;
+        var i2 = m2.call(o2), r2, ar = [], e2;
+        try {
+          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
+            ar.push(r2.value);
+        } catch (error) {
+          e2 = { error };
+        } finally {
+          try {
+            if (r2 && !r2.done && (m2 = i2["return"]))
+              m2.call(i2);
+          } finally {
+            if (e2)
+              throw e2.error;
+          }
+        }
+        return ar;
+      };
+      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
+        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
+          to[j2] = from3[i2];
+        return to;
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.intervalProvider = void 0;
+      exports.intervalProvider = {
+        setInterval: function(handler, timeout) {
+          var args = [];
+          for (var _i = 2; _i < arguments.length; _i++) {
+            args[_i - 2] = arguments[_i];
+          }
+          var delegate = exports.intervalProvider.delegate;
+          if (delegate === null || delegate === void 0 ? void 0 : delegate.setInterval) {
+            return delegate.setInterval.apply(delegate, __spreadArray3([handler, timeout], __read3(args)));
+          }
+          return setInterval.apply(void 0, __spreadArray3([handler, timeout], __read3(args)));
+        },
+        clearInterval: function(handle) {
+          var delegate = exports.intervalProvider.delegate;
+          return ((delegate === null || delegate === void 0 ? void 0 : delegate.clearInterval) || clearInterval)(handle);
+        },
+        delegate: void 0
+      };
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncAction.js
+  var require_AsyncAction = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncAction.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.AsyncAction = void 0;
+      var Action_1 = require_Action();
+      var intervalProvider_1 = require_intervalProvider();
+      var arrRemove_1 = require_arrRemove();
+      var AsyncAction2 = function(_super) {
+        __extends3(AsyncAction3, _super);
+        function AsyncAction3(scheduler, work) {
+          var _this = _super.call(this, scheduler, work) || this;
+          _this.scheduler = scheduler;
+          _this.work = work;
+          _this.pending = false;
+          return _this;
+        }
+        AsyncAction3.prototype.schedule = function(state, delay) {
+          var _a;
+          if (delay === void 0) {
+            delay = 0;
+          }
+          if (this.closed) {
+            return this;
+          }
+          this.state = state;
+          var id = this.id;
+          var scheduler = this.scheduler;
+          if (id != null) {
+            this.id = this.recycleAsyncId(scheduler, id, delay);
+          }
+          this.pending = true;
+          this.delay = delay;
+          this.id = (_a = this.id) !== null && _a !== void 0 ? _a : this.requestAsyncId(scheduler, this.id, delay);
+          return this;
+        };
+        AsyncAction3.prototype.requestAsyncId = function(scheduler, _id, delay) {
+          if (delay === void 0) {
+            delay = 0;
+          }
+          return intervalProvider_1.intervalProvider.setInterval(scheduler.flush.bind(scheduler, this), delay);
+        };
+        AsyncAction3.prototype.recycleAsyncId = function(_scheduler, id, delay) {
+          if (delay === void 0) {
+            delay = 0;
+          }
+          if (delay != null && this.delay === delay && this.pending === false) {
+            return id;
+          }
+          if (id != null) {
+            intervalProvider_1.intervalProvider.clearInterval(id);
+          }
+          return void 0;
+        };
+        AsyncAction3.prototype.execute = function(state, delay) {
+          if (this.closed) {
+            return new Error("executing a cancelled action");
+          }
+          this.pending = false;
+          var error = this._execute(state, delay);
+          if (error) {
+            return error;
+          } else if (this.pending === false && this.id != null) {
+            this.id = this.recycleAsyncId(this.scheduler, this.id, null);
+          }
+        };
+        AsyncAction3.prototype._execute = function(state, _delay) {
+          var errored = false;
+          var errorValue;
+          try {
+            this.work(state);
+          } catch (e2) {
+            errored = true;
+            errorValue = e2 ? e2 : new Error("Scheduled action threw falsy error");
+          }
+          if (errored) {
+            this.unsubscribe();
+            return errorValue;
+          }
+        };
+        AsyncAction3.prototype.unsubscribe = function() {
+          if (!this.closed) {
+            var _a = this, id = _a.id, scheduler = _a.scheduler;
+            var actions = scheduler.actions;
+            this.work = this.state = this.scheduler = null;
+            this.pending = false;
+            arrRemove_1.arrRemove(actions, this);
+            if (id != null) {
+              this.id = this.recycleAsyncId(scheduler, id, null);
+            }
+            this.delay = null;
+            _super.prototype.unsubscribe.call(this);
+          }
+        };
+        return AsyncAction3;
+      }(Action_1.Action);
+      exports.AsyncAction = AsyncAction2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/dateTimestampProvider.js
+  var require_dateTimestampProvider = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/dateTimestampProvider.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.dateTimestampProvider = void 0;
+      exports.dateTimestampProvider = {
+        now: function() {
+          return (exports.dateTimestampProvider.delegate || Date).now();
+        },
+        delegate: void 0
+      };
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Scheduler.js
+  var require_Scheduler = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Scheduler.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.Scheduler = void 0;
+      var dateTimestampProvider_1 = require_dateTimestampProvider();
+      var Scheduler2 = function() {
+        function Scheduler3(schedulerActionCtor, now2) {
+          if (now2 === void 0) {
+            now2 = Scheduler3.now;
+          }
+          this.schedulerActionCtor = schedulerActionCtor;
+          this.now = now2;
+        }
+        Scheduler3.prototype.schedule = function(work, delay, state) {
+          if (delay === void 0) {
+            delay = 0;
+          }
+          return new this.schedulerActionCtor(this, work).schedule(state, delay);
+        };
+        Scheduler3.now = dateTimestampProvider_1.dateTimestampProvider.now;
+        return Scheduler3;
+      }();
+      exports.Scheduler = Scheduler2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncScheduler.js
+  var require_AsyncScheduler = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/AsyncScheduler.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.AsyncScheduler = void 0;
+      var Scheduler_1 = require_Scheduler();
+      var AsyncScheduler2 = function(_super) {
+        __extends3(AsyncScheduler3, _super);
+        function AsyncScheduler3(SchedulerAction, now2) {
+          if (now2 === void 0) {
+            now2 = Scheduler_1.Scheduler.now;
+          }
+          var _this = _super.call(this, SchedulerAction, now2) || this;
+          _this.actions = [];
+          _this._active = false;
+          return _this;
+        }
+        AsyncScheduler3.prototype.flush = function(action) {
+          var actions = this.actions;
+          if (this._active) {
+            actions.push(action);
+            return;
+          }
+          var error;
+          this._active = true;
+          do {
+            if (error = action.execute(action.state, action.delay)) {
+              break;
+            }
+          } while (action = actions.shift());
+          this._active = false;
+          if (error) {
+            while (action = actions.shift()) {
+              action.unsubscribe();
+            }
+            throw error;
+          }
+        };
+        return AsyncScheduler3;
+      }(Scheduler_1.Scheduler);
+      exports.AsyncScheduler = AsyncScheduler2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/async.js
+  var require_async = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/scheduler/async.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.async = exports.asyncScheduler = void 0;
+      var AsyncAction_1 = require_AsyncAction();
+      var AsyncScheduler_1 = require_AsyncScheduler();
+      exports.asyncScheduler = new AsyncScheduler_1.AsyncScheduler(AsyncAction_1.AsyncAction);
+      exports.async = exports.asyncScheduler;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isScheduler.js
+  var require_isScheduler = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isScheduler.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.isScheduler = void 0;
+      var isFunction_1 = require_isFunction();
+      function isScheduler3(value) {
+        return value && isFunction_1.isFunction(value.schedule);
+      }
+      exports.isScheduler = isScheduler3;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isDate.js
+  var require_isDate = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isDate.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.isValidDate = void 0;
+      function isValidDate2(value) {
+        return value instanceof Date && !isNaN(value);
+      }
+      exports.isValidDate = isValidDate2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/timer.js
+  var require_timer = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/timer.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.timer = void 0;
+      var Observable_1 = require_Observable();
+      var async_1 = require_async();
+      var isScheduler_1 = require_isScheduler();
+      var isDate_1 = require_isDate();
+      function timer2(dueTime, intervalOrScheduler, scheduler) {
+        if (dueTime === void 0) {
+          dueTime = 0;
+        }
+        if (scheduler === void 0) {
+          scheduler = async_1.async;
+        }
+        var intervalDuration = -1;
+        if (intervalOrScheduler != null) {
+          if (isScheduler_1.isScheduler(intervalOrScheduler)) {
+            scheduler = intervalOrScheduler;
+          } else {
+            intervalDuration = intervalOrScheduler;
+          }
+        }
+        return new Observable_1.Observable(function(subscriber) {
+          var due = isDate_1.isValidDate(dueTime) ? +dueTime - scheduler.now() : dueTime;
+          if (due < 0) {
+            due = 0;
+          }
+          var n2 = 0;
+          return scheduler.schedule(function() {
+            if (!subscriber.closed) {
+              subscriber.next(n2++);
+              if (0 <= intervalDuration) {
+                this.schedule(void 0, intervalDuration);
+              } else {
+                subscriber.complete();
+              }
+            }
+          }, due);
+        });
+      }
+      exports.timer = timer2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/auditTime.js
+  var require_auditTime = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/auditTime.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.auditTime = void 0;
+      var async_1 = require_async();
+      var audit_1 = require_audit();
+      var timer_1 = require_timer();
+      function auditTime(duration, scheduler) {
+        if (scheduler === void 0) {
+          scheduler = async_1.asyncScheduler;
+        }
+        return audit_1.audit(function() {
+          return timer_1.timer(duration, scheduler);
+        });
+      }
+      exports.auditTime = auditTime;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/buffer.js
+  var require_buffer = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/buffer.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.buffer = void 0;
+      var lift_1 = require_lift();
+      var noop_1 = require_noop();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var innerFrom_1 = require_innerFrom();
+      function buffer(closingNotifier) {
+        return lift_1.operate(function(source2, subscriber) {
+          var currentBuffer = [];
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            return currentBuffer.push(value);
+          }, function() {
+            subscriber.next(currentBuffer);
+            subscriber.complete();
+          }));
+          innerFrom_1.innerFrom(closingNotifier).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function() {
+            var b2 = currentBuffer;
+            currentBuffer = [];
+            subscriber.next(b2);
+          }, noop_1.noop));
+          return function() {
+            currentBuffer = null;
+          };
+        });
+      }
+      exports.buffer = buffer;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferCount.js
+  var require_bufferCount = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferCount.js"(exports) {
+      "use strict";
+      var __values3 = exports && exports.__values || function(o2) {
+        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
+        if (m2)
+          return m2.call(o2);
+        if (o2 && typeof o2.length === "number")
+          return {
+            next: function() {
+              if (o2 && i2 >= o2.length)
+                o2 = void 0;
+              return { value: o2 && o2[i2++], done: !o2 };
+            }
+          };
+        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.bufferCount = void 0;
+      var lift_1 = require_lift();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var arrRemove_1 = require_arrRemove();
+      function bufferCount(bufferSize, startBufferEvery) {
+        if (startBufferEvery === void 0) {
+          startBufferEvery = null;
+        }
+        startBufferEvery = startBufferEvery !== null && startBufferEvery !== void 0 ? startBufferEvery : bufferSize;
+        return lift_1.operate(function(source2, subscriber) {
+          var buffers = [];
+          var count2 = 0;
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            var e_1, _a, e_2, _b;
+            var toEmit = null;
+            if (count2++ % startBufferEvery === 0) {
+              buffers.push([]);
+            }
+            try {
+              for (var buffers_1 = __values3(buffers), buffers_1_1 = buffers_1.next(); !buffers_1_1.done; buffers_1_1 = buffers_1.next()) {
+                var buffer = buffers_1_1.value;
+                buffer.push(value);
+                if (bufferSize <= buffer.length) {
+                  toEmit = toEmit !== null && toEmit !== void 0 ? toEmit : [];
+                  toEmit.push(buffer);
+                }
+              }
+            } catch (e_1_1) {
+              e_1 = { error: e_1_1 };
+            } finally {
+              try {
+                if (buffers_1_1 && !buffers_1_1.done && (_a = buffers_1.return))
+                  _a.call(buffers_1);
+              } finally {
+                if (e_1)
+                  throw e_1.error;
+              }
+            }
+            if (toEmit) {
+              try {
+                for (var toEmit_1 = __values3(toEmit), toEmit_1_1 = toEmit_1.next(); !toEmit_1_1.done; toEmit_1_1 = toEmit_1.next()) {
+                  var buffer = toEmit_1_1.value;
+                  arrRemove_1.arrRemove(buffers, buffer);
+                  subscriber.next(buffer);
+                }
+              } catch (e_2_1) {
+                e_2 = { error: e_2_1 };
+              } finally {
+                try {
+                  if (toEmit_1_1 && !toEmit_1_1.done && (_b = toEmit_1.return))
+                    _b.call(toEmit_1);
+                } finally {
+                  if (e_2)
+                    throw e_2.error;
+                }
+              }
+            }
+          }, function() {
+            var e_3, _a;
+            try {
+              for (var buffers_2 = __values3(buffers), buffers_2_1 = buffers_2.next(); !buffers_2_1.done; buffers_2_1 = buffers_2.next()) {
+                var buffer = buffers_2_1.value;
+                subscriber.next(buffer);
+              }
+            } catch (e_3_1) {
+              e_3 = { error: e_3_1 };
+            } finally {
+              try {
+                if (buffers_2_1 && !buffers_2_1.done && (_a = buffers_2.return))
+                  _a.call(buffers_2);
+              } finally {
+                if (e_3)
+                  throw e_3.error;
+              }
+            }
+            subscriber.complete();
+          }, void 0, function() {
+            buffers = null;
+          }));
+        });
+      }
+      exports.bufferCount = bufferCount;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/args.js
+  var require_args = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/args.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.popNumber = exports.popScheduler = exports.popResultSelector = void 0;
+      var isFunction_1 = require_isFunction();
+      var isScheduler_1 = require_isScheduler();
+      function last3(arr) {
+        return arr[arr.length - 1];
+      }
+      function popResultSelector3(args) {
+        return isFunction_1.isFunction(last3(args)) ? args.pop() : void 0;
+      }
+      exports.popResultSelector = popResultSelector3;
+      function popScheduler3(args) {
+        return isScheduler_1.isScheduler(last3(args)) ? args.pop() : void 0;
+      }
+      exports.popScheduler = popScheduler3;
+      function popNumber3(args, defaultValue2) {
+        return typeof last3(args) === "number" ? args.pop() : defaultValue2;
+      }
+      exports.popNumber = popNumber3;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/executeSchedule.js
   var require_executeSchedule = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/executeSchedule.js"(exports) {
@@ -37962,6 +38413,287 @@ ${parts.join("\n")}
         }
       }
       exports.executeSchedule = executeSchedule3;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferTime.js
+  var require_bufferTime = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferTime.js"(exports) {
+      "use strict";
+      var __values3 = exports && exports.__values || function(o2) {
+        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
+        if (m2)
+          return m2.call(o2);
+        if (o2 && typeof o2.length === "number")
+          return {
+            next: function() {
+              if (o2 && i2 >= o2.length)
+                o2 = void 0;
+              return { value: o2 && o2[i2++], done: !o2 };
+            }
+          };
+        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.bufferTime = void 0;
+      var Subscription_1 = require_Subscription();
+      var lift_1 = require_lift();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var arrRemove_1 = require_arrRemove();
+      var async_1 = require_async();
+      var args_1 = require_args();
+      var executeSchedule_1 = require_executeSchedule();
+      function bufferTime(bufferTimeSpan) {
+        var _a, _b;
+        var otherArgs = [];
+        for (var _i = 1; _i < arguments.length; _i++) {
+          otherArgs[_i - 1] = arguments[_i];
+        }
+        var scheduler = (_a = args_1.popScheduler(otherArgs)) !== null && _a !== void 0 ? _a : async_1.asyncScheduler;
+        var bufferCreationInterval = (_b = otherArgs[0]) !== null && _b !== void 0 ? _b : null;
+        var maxBufferSize = otherArgs[1] || Infinity;
+        return lift_1.operate(function(source2, subscriber) {
+          var bufferRecords = [];
+          var restartOnEmit = false;
+          var emit = function(record) {
+            var buffer = record.buffer, subs = record.subs;
+            subs.unsubscribe();
+            arrRemove_1.arrRemove(bufferRecords, record);
+            subscriber.next(buffer);
+            restartOnEmit && startBuffer();
+          };
+          var startBuffer = function() {
+            if (bufferRecords) {
+              var subs = new Subscription_1.Subscription();
+              subscriber.add(subs);
+              var buffer = [];
+              var record_1 = {
+                buffer,
+                subs
+              };
+              bufferRecords.push(record_1);
+              executeSchedule_1.executeSchedule(subs, scheduler, function() {
+                return emit(record_1);
+              }, bufferTimeSpan);
+            }
+          };
+          if (bufferCreationInterval !== null && bufferCreationInterval >= 0) {
+            executeSchedule_1.executeSchedule(subscriber, scheduler, startBuffer, bufferCreationInterval, true);
+          } else {
+            restartOnEmit = true;
+          }
+          startBuffer();
+          var bufferTimeSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            var e_1, _a2;
+            var recordsCopy = bufferRecords.slice();
+            try {
+              for (var recordsCopy_1 = __values3(recordsCopy), recordsCopy_1_1 = recordsCopy_1.next(); !recordsCopy_1_1.done; recordsCopy_1_1 = recordsCopy_1.next()) {
+                var record = recordsCopy_1_1.value;
+                var buffer = record.buffer;
+                buffer.push(value);
+                maxBufferSize <= buffer.length && emit(record);
+              }
+            } catch (e_1_1) {
+              e_1 = { error: e_1_1 };
+            } finally {
+              try {
+                if (recordsCopy_1_1 && !recordsCopy_1_1.done && (_a2 = recordsCopy_1.return))
+                  _a2.call(recordsCopy_1);
+              } finally {
+                if (e_1)
+                  throw e_1.error;
+              }
+            }
+          }, function() {
+            while (bufferRecords === null || bufferRecords === void 0 ? void 0 : bufferRecords.length) {
+              subscriber.next(bufferRecords.shift().buffer);
+            }
+            bufferTimeSubscriber === null || bufferTimeSubscriber === void 0 ? void 0 : bufferTimeSubscriber.unsubscribe();
+            subscriber.complete();
+            subscriber.unsubscribe();
+          }, void 0, function() {
+            return bufferRecords = null;
+          });
+          source2.subscribe(bufferTimeSubscriber);
+        });
+      }
+      exports.bufferTime = bufferTime;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferToggle.js
+  var require_bufferToggle = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferToggle.js"(exports) {
+      "use strict";
+      var __values3 = exports && exports.__values || function(o2) {
+        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
+        if (m2)
+          return m2.call(o2);
+        if (o2 && typeof o2.length === "number")
+          return {
+            next: function() {
+              if (o2 && i2 >= o2.length)
+                o2 = void 0;
+              return { value: o2 && o2[i2++], done: !o2 };
+            }
+          };
+        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.bufferToggle = void 0;
+      var Subscription_1 = require_Subscription();
+      var lift_1 = require_lift();
+      var innerFrom_1 = require_innerFrom();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var noop_1 = require_noop();
+      var arrRemove_1 = require_arrRemove();
+      function bufferToggle(openings, closingSelector) {
+        return lift_1.operate(function(source2, subscriber) {
+          var buffers = [];
+          innerFrom_1.innerFrom(openings).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(openValue) {
+            var buffer = [];
+            buffers.push(buffer);
+            var closingSubscription = new Subscription_1.Subscription();
+            var emitBuffer = function() {
+              arrRemove_1.arrRemove(buffers, buffer);
+              subscriber.next(buffer);
+              closingSubscription.unsubscribe();
+            };
+            closingSubscription.add(innerFrom_1.innerFrom(closingSelector(openValue)).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, emitBuffer, noop_1.noop)));
+          }, noop_1.noop));
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            var e_1, _a;
+            try {
+              for (var buffers_1 = __values3(buffers), buffers_1_1 = buffers_1.next(); !buffers_1_1.done; buffers_1_1 = buffers_1.next()) {
+                var buffer = buffers_1_1.value;
+                buffer.push(value);
+              }
+            } catch (e_1_1) {
+              e_1 = { error: e_1_1 };
+            } finally {
+              try {
+                if (buffers_1_1 && !buffers_1_1.done && (_a = buffers_1.return))
+                  _a.call(buffers_1);
+              } finally {
+                if (e_1)
+                  throw e_1.error;
+              }
+            }
+          }, function() {
+            while (buffers.length > 0) {
+              subscriber.next(buffers.shift());
+            }
+            subscriber.complete();
+          }));
+        });
+      }
+      exports.bufferToggle = bufferToggle;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferWhen.js
+  var require_bufferWhen = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferWhen.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.bufferWhen = void 0;
+      var lift_1 = require_lift();
+      var noop_1 = require_noop();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var innerFrom_1 = require_innerFrom();
+      function bufferWhen(closingSelector) {
+        return lift_1.operate(function(source2, subscriber) {
+          var buffer = null;
+          var closingSubscriber = null;
+          var openBuffer = function() {
+            closingSubscriber === null || closingSubscriber === void 0 ? void 0 : closingSubscriber.unsubscribe();
+            var b2 = buffer;
+            buffer = [];
+            b2 && subscriber.next(b2);
+            innerFrom_1.innerFrom(closingSelector()).subscribe(closingSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, openBuffer, noop_1.noop));
+          };
+          openBuffer();
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            return buffer === null || buffer === void 0 ? void 0 : buffer.push(value);
+          }, function() {
+            buffer && subscriber.next(buffer);
+            subscriber.complete();
+          }, void 0, function() {
+            return buffer = closingSubscriber = null;
+          }));
+        });
+      }
+      exports.bufferWhen = bufferWhen;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/catchError.js
+  var require_catchError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/catchError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.catchError = void 0;
+      var innerFrom_1 = require_innerFrom();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var lift_1 = require_lift();
+      function catchError(selector) {
+        return lift_1.operate(function(source2, subscriber) {
+          var innerSub = null;
+          var syncUnsub = false;
+          var handledResult;
+          innerSub = source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, void 0, void 0, function(err) {
+            handledResult = innerFrom_1.innerFrom(selector(err, catchError(selector)(source2)));
+            if (innerSub) {
+              innerSub.unsubscribe();
+              innerSub = null;
+              handledResult.subscribe(subscriber);
+            } else {
+              syncUnsub = true;
+            }
+          }));
+          if (syncUnsub) {
+            innerSub.unsubscribe();
+            innerSub = null;
+            handledResult.subscribe(subscriber);
+          }
+        });
+      }
+      exports.catchError = catchError;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsArgArrayOrObject.js
+  var require_argsArgArrayOrObject = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsArgArrayOrObject.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.argsArgArrayOrObject = void 0;
+      var isArray3 = Array.isArray;
+      var getPrototypeOf2 = Object.getPrototypeOf;
+      var objectProto2 = Object.prototype;
+      var getKeys2 = Object.keys;
+      function argsArgArrayOrObject2(args) {
+        if (args.length === 1) {
+          var first_1 = args[0];
+          if (isArray3(first_1)) {
+            return { args: first_1, keys: null };
+          }
+          if (isPOJO2(first_1)) {
+            var keys = getKeys2(first_1);
+            return {
+              args: keys.map(function(key) {
+                return first_1[key];
+              }),
+              keys
+            };
+          }
+        }
+        return { args, keys: null };
+      }
+      exports.argsArgArrayOrObject = argsArgArrayOrObject2;
+      function isPOJO2(obj) {
+        return obj && typeof obj === "object" && getPrototypeOf2(obj) === objectProto2;
+      }
     }
   });
 
@@ -38225,349 +38957,6 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/of.js
-  var require_of = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/of.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.of = void 0;
-      var args_1 = require_args();
-      var from_1 = require_from();
-      function of2() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        var scheduler = args_1.popScheduler(args);
-        return from_1.from(args, scheduler);
-      }
-      exports.of = of2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/throwError.js
-  var require_throwError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/throwError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.throwError = void 0;
-      var Observable_1 = require_Observable();
-      var isFunction_1 = require_isFunction();
-      function throwError(errorOrErrorFactory, scheduler) {
-        var errorFactory = isFunction_1.isFunction(errorOrErrorFactory) ? errorOrErrorFactory : function() {
-          return errorOrErrorFactory;
-        };
-        var init3 = function(subscriber) {
-          return subscriber.error(errorFactory());
-        };
-        return new Observable_1.Observable(scheduler ? function(subscriber) {
-          return scheduler.schedule(init3, 0, subscriber);
-        } : init3);
-      }
-      exports.throwError = throwError;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Notification.js
-  var require_Notification = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Notification.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.observeNotification = exports.Notification = exports.NotificationKind = void 0;
-      var empty_1 = require_empty();
-      var of_1 = require_of();
-      var throwError_1 = require_throwError();
-      var isFunction_1 = require_isFunction();
-      var NotificationKind;
-      (function(NotificationKind2) {
-        NotificationKind2["NEXT"] = "N";
-        NotificationKind2["ERROR"] = "E";
-        NotificationKind2["COMPLETE"] = "C";
-      })(NotificationKind = exports.NotificationKind || (exports.NotificationKind = {}));
-      var Notification = function() {
-        function Notification2(kind, value, error) {
-          this.kind = kind;
-          this.value = value;
-          this.error = error;
-          this.hasValue = kind === "N";
-        }
-        Notification2.prototype.observe = function(observer) {
-          return observeNotification(this, observer);
-        };
-        Notification2.prototype.do = function(nextHandler, errorHandler, completeHandler) {
-          var _a = this, kind = _a.kind, value = _a.value, error = _a.error;
-          return kind === "N" ? nextHandler === null || nextHandler === void 0 ? void 0 : nextHandler(value) : kind === "E" ? errorHandler === null || errorHandler === void 0 ? void 0 : errorHandler(error) : completeHandler === null || completeHandler === void 0 ? void 0 : completeHandler();
-        };
-        Notification2.prototype.accept = function(nextOrObserver, error, complete) {
-          var _a;
-          return isFunction_1.isFunction((_a = nextOrObserver) === null || _a === void 0 ? void 0 : _a.next) ? this.observe(nextOrObserver) : this.do(nextOrObserver, error, complete);
-        };
-        Notification2.prototype.toObservable = function() {
-          var _a = this, kind = _a.kind, value = _a.value, error = _a.error;
-          var result = kind === "N" ? of_1.of(value) : kind === "E" ? throwError_1.throwError(function() {
-            return error;
-          }) : kind === "C" ? empty_1.EMPTY : 0;
-          if (!result) {
-            throw new TypeError("Unexpected notification kind " + kind);
-          }
-          return result;
-        };
-        Notification2.createNext = function(value) {
-          return new Notification2("N", value);
-        };
-        Notification2.createError = function(err) {
-          return new Notification2("E", void 0, err);
-        };
-        Notification2.createComplete = function() {
-          return Notification2.completeNotification;
-        };
-        Notification2.completeNotification = new Notification2("C");
-        return Notification2;
-      }();
-      exports.Notification = Notification;
-      function observeNotification(notification, observer) {
-        var _a, _b, _c;
-        var _d = notification, kind = _d.kind, value = _d.value, error = _d.error;
-        if (typeof kind !== "string") {
-          throw new TypeError('Invalid notification, missing "kind"');
-        }
-        kind === "N" ? (_a = observer.next) === null || _a === void 0 ? void 0 : _a.call(observer, value) : kind === "E" ? (_b = observer.error) === null || _b === void 0 ? void 0 : _b.call(observer, error) : (_c = observer.complete) === null || _c === void 0 ? void 0 : _c.call(observer);
-      }
-      exports.observeNotification = observeNotification;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isObservable.js
-  var require_isObservable = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isObservable.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.isObservable = void 0;
-      var Observable_1 = require_Observable();
-      var isFunction_1 = require_isFunction();
-      function isObservable(obj) {
-        return !!obj && (obj instanceof Observable_1.Observable || isFunction_1.isFunction(obj.lift) && isFunction_1.isFunction(obj.subscribe));
-      }
-      exports.isObservable = isObservable;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/EmptyError.js
-  var require_EmptyError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/EmptyError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.EmptyError = void 0;
-      var createErrorClass_1 = require_createErrorClass();
-      exports.EmptyError = createErrorClass_1.createErrorClass(function(_super) {
-        return function EmptyErrorImpl() {
-          _super(this);
-          this.name = "EmptyError";
-          this.message = "no elements in sequence";
-        };
-      });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/lastValueFrom.js
-  var require_lastValueFrom = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/lastValueFrom.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.lastValueFrom = void 0;
-      var EmptyError_1 = require_EmptyError();
-      function lastValueFrom(source2, config4) {
-        var hasConfig = typeof config4 === "object";
-        return new Promise(function(resolve, reject) {
-          var _hasValue = false;
-          var _value;
-          source2.subscribe({
-            next: function(value) {
-              _value = value;
-              _hasValue = true;
-            },
-            error: reject,
-            complete: function() {
-              if (_hasValue) {
-                resolve(_value);
-              } else if (hasConfig) {
-                resolve(config4.defaultValue);
-              } else {
-                reject(new EmptyError_1.EmptyError());
-              }
-            }
-          });
-        });
-      }
-      exports.lastValueFrom = lastValueFrom;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/firstValueFrom.js
-  var require_firstValueFrom = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/firstValueFrom.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.firstValueFrom = void 0;
-      var EmptyError_1 = require_EmptyError();
-      var Subscriber_1 = require_Subscriber();
-      function firstValueFrom(source2, config4) {
-        var hasConfig = typeof config4 === "object";
-        return new Promise(function(resolve, reject) {
-          var subscriber = new Subscriber_1.SafeSubscriber({
-            next: function(value) {
-              resolve(value);
-              subscriber.unsubscribe();
-            },
-            error: reject,
-            complete: function() {
-              if (hasConfig) {
-                resolve(config4.defaultValue);
-              } else {
-                reject(new EmptyError_1.EmptyError());
-              }
-            }
-          });
-          source2.subscribe(subscriber);
-        });
-      }
-      exports.firstValueFrom = firstValueFrom;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ArgumentOutOfRangeError.js
-  var require_ArgumentOutOfRangeError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ArgumentOutOfRangeError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.ArgumentOutOfRangeError = void 0;
-      var createErrorClass_1 = require_createErrorClass();
-      exports.ArgumentOutOfRangeError = createErrorClass_1.createErrorClass(function(_super) {
-        return function ArgumentOutOfRangeErrorImpl() {
-          _super(this);
-          this.name = "ArgumentOutOfRangeError";
-          this.message = "argument out of range";
-        };
-      });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/NotFoundError.js
-  var require_NotFoundError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/NotFoundError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.NotFoundError = void 0;
-      var createErrorClass_1 = require_createErrorClass();
-      exports.NotFoundError = createErrorClass_1.createErrorClass(function(_super) {
-        return function NotFoundErrorImpl(message) {
-          _super(this);
-          this.name = "NotFoundError";
-          this.message = message;
-        };
-      });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/SequenceError.js
-  var require_SequenceError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/SequenceError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.SequenceError = void 0;
-      var createErrorClass_1 = require_createErrorClass();
-      exports.SequenceError = createErrorClass_1.createErrorClass(function(_super) {
-        return function SequenceErrorImpl(message) {
-          _super(this);
-          this.name = "SequenceError";
-          this.message = message;
-        };
-      });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isDate.js
-  var require_isDate = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/isDate.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.isValidDate = void 0;
-      function isValidDate2(value) {
-        return value instanceof Date && !isNaN(value);
-      }
-      exports.isValidDate = isValidDate2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/timeout.js
-  var require_timeout = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/timeout.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.timeout = exports.TimeoutError = void 0;
-      var async_1 = require_async();
-      var isDate_1 = require_isDate();
-      var lift_1 = require_lift();
-      var innerFrom_1 = require_innerFrom();
-      var createErrorClass_1 = require_createErrorClass();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var executeSchedule_1 = require_executeSchedule();
-      exports.TimeoutError = createErrorClass_1.createErrorClass(function(_super) {
-        return function TimeoutErrorImpl(info) {
-          if (info === void 0) {
-            info = null;
-          }
-          _super(this);
-          this.message = "Timeout has occurred";
-          this.name = "TimeoutError";
-          this.info = info;
-        };
-      });
-      function timeout(config4, schedulerArg) {
-        var _a = isDate_1.isValidDate(config4) ? { first: config4 } : typeof config4 === "number" ? { each: config4 } : config4, first2 = _a.first, each = _a.each, _b = _a.with, _with = _b === void 0 ? timeoutErrorFactory : _b, _c = _a.scheduler, scheduler = _c === void 0 ? schedulerArg !== null && schedulerArg !== void 0 ? schedulerArg : async_1.asyncScheduler : _c, _d = _a.meta, meta = _d === void 0 ? null : _d;
-        if (first2 == null && each == null) {
-          throw new TypeError("No timeout provided.");
-        }
-        return lift_1.operate(function(source2, subscriber) {
-          var originalSourceSubscription;
-          var timerSubscription;
-          var lastValue = null;
-          var seen = 0;
-          var startTimer = function(delay) {
-            timerSubscription = executeSchedule_1.executeSchedule(subscriber, scheduler, function() {
-              try {
-                originalSourceSubscription.unsubscribe();
-                innerFrom_1.innerFrom(_with({
-                  meta,
-                  lastValue,
-                  seen
-                })).subscribe(subscriber);
-              } catch (err) {
-                subscriber.error(err);
-              }
-            }, delay);
-          };
-          originalSourceSubscription = source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.unsubscribe();
-            seen++;
-            subscriber.next(lastValue = value);
-            each > 0 && startTimer(each);
-          }, void 0, void 0, function() {
-            if (!(timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.closed)) {
-              timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.unsubscribe();
-            }
-            lastValue = null;
-          }));
-          !seen && startTimer(first2 != null ? typeof first2 === "number" ? first2 : +first2 - scheduler.now() : each);
-        });
-      }
-      exports.timeout = timeout;
-      function timeoutErrorFactory(info) {
-        throw new exports.TimeoutError(info);
-      }
-    }
-  });
-
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/map.js
   var require_map = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/map.js"(exports) {
@@ -38631,177 +39020,6 @@ ${parts.join("\n")}
         });
       }
       exports.mapOneOrManyArgs = mapOneOrManyArgs2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindCallbackInternals.js
-  var require_bindCallbackInternals = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindCallbackInternals.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bindCallbackInternals = void 0;
-      var isScheduler_1 = require_isScheduler();
-      var Observable_1 = require_Observable();
-      var subscribeOn_1 = require_subscribeOn();
-      var mapOneOrManyArgs_1 = require_mapOneOrManyArgs();
-      var observeOn_1 = require_observeOn();
-      var AsyncSubject_1 = require_AsyncSubject();
-      function bindCallbackInternals(isNodeStyle, callbackFunc, resultSelector, scheduler) {
-        if (resultSelector) {
-          if (isScheduler_1.isScheduler(resultSelector)) {
-            scheduler = resultSelector;
-          } else {
-            return function() {
-              var args = [];
-              for (var _i = 0; _i < arguments.length; _i++) {
-                args[_i] = arguments[_i];
-              }
-              return bindCallbackInternals(isNodeStyle, callbackFunc, scheduler).apply(this, args).pipe(mapOneOrManyArgs_1.mapOneOrManyArgs(resultSelector));
-            };
-          }
-        }
-        if (scheduler) {
-          return function() {
-            var args = [];
-            for (var _i = 0; _i < arguments.length; _i++) {
-              args[_i] = arguments[_i];
-            }
-            return bindCallbackInternals(isNodeStyle, callbackFunc).apply(this, args).pipe(subscribeOn_1.subscribeOn(scheduler), observeOn_1.observeOn(scheduler));
-          };
-        }
-        return function() {
-          var _this = this;
-          var args = [];
-          for (var _i = 0; _i < arguments.length; _i++) {
-            args[_i] = arguments[_i];
-          }
-          var subject = new AsyncSubject_1.AsyncSubject();
-          var uninitialized = true;
-          return new Observable_1.Observable(function(subscriber) {
-            var subs = subject.subscribe(subscriber);
-            if (uninitialized) {
-              uninitialized = false;
-              var isAsync_1 = false;
-              var isComplete_1 = false;
-              callbackFunc.apply(_this, __spreadArray3(__spreadArray3([], __read3(args)), [
-                function() {
-                  var results = [];
-                  for (var _i2 = 0; _i2 < arguments.length; _i2++) {
-                    results[_i2] = arguments[_i2];
-                  }
-                  if (isNodeStyle) {
-                    var err = results.shift();
-                    if (err != null) {
-                      subject.error(err);
-                      return;
-                    }
-                  }
-                  subject.next(1 < results.length ? results : results[0]);
-                  isComplete_1 = true;
-                  if (isAsync_1) {
-                    subject.complete();
-                  }
-                }
-              ]));
-              if (isComplete_1) {
-                subject.complete();
-              }
-              isAsync_1 = true;
-            }
-            return subs;
-          });
-        };
-      }
-      exports.bindCallbackInternals = bindCallbackInternals;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindCallback.js
-  var require_bindCallback = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindCallback.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bindCallback = void 0;
-      var bindCallbackInternals_1 = require_bindCallbackInternals();
-      function bindCallback(callbackFunc, resultSelector, scheduler) {
-        return bindCallbackInternals_1.bindCallbackInternals(false, callbackFunc, resultSelector, scheduler);
-      }
-      exports.bindCallback = bindCallback;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindNodeCallback.js
-  var require_bindNodeCallback = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/bindNodeCallback.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bindNodeCallback = void 0;
-      var bindCallbackInternals_1 = require_bindCallbackInternals();
-      function bindNodeCallback(callbackFunc, resultSelector, scheduler) {
-        return bindCallbackInternals_1.bindCallbackInternals(true, callbackFunc, resultSelector, scheduler);
-      }
-      exports.bindNodeCallback = bindNodeCallback;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsArgArrayOrObject.js
-  var require_argsArgArrayOrObject = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsArgArrayOrObject.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.argsArgArrayOrObject = void 0;
-      var isArray3 = Array.isArray;
-      var getPrototypeOf2 = Object.getPrototypeOf;
-      var objectProto2 = Object.prototype;
-      var getKeys2 = Object.keys;
-      function argsArgArrayOrObject2(args) {
-        if (args.length === 1) {
-          var first_1 = args[0];
-          if (isArray3(first_1)) {
-            return { args: first_1, keys: null };
-          }
-          if (isPOJO2(first_1)) {
-            var keys = getKeys2(first_1);
-            return {
-              args: keys.map(function(key) {
-                return first_1[key];
-              }),
-              keys
-            };
-          }
-        }
-        return { args, keys: null };
-      }
-      exports.argsArgArrayOrObject = argsArgArrayOrObject2;
-      function isPOJO2(obj) {
-        return obj && typeof obj === "object" && getPrototypeOf2(obj) === objectProto2;
-      }
     }
   });
 
@@ -39002,1334 +39220,6 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeAll.js
-  var require_mergeAll = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeAll.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.mergeAll = void 0;
-      var mergeMap_1 = require_mergeMap();
-      var identity_1 = require_identity();
-      function mergeAll3(concurrent) {
-        if (concurrent === void 0) {
-          concurrent = Infinity;
-        }
-        return mergeMap_1.mergeMap(identity_1.identity, concurrent);
-      }
-      exports.mergeAll = mergeAll3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatAll.js
-  var require_concatAll = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatAll.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.concatAll = void 0;
-      var mergeAll_1 = require_mergeAll();
-      function concatAll() {
-        return mergeAll_1.mergeAll(1);
-      }
-      exports.concatAll = concatAll;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/concat.js
-  var require_concat = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/concat.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.concat = void 0;
-      var concatAll_1 = require_concatAll();
-      var args_1 = require_args();
-      var from_1 = require_from();
-      function concat() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        return concatAll_1.concatAll()(from_1.from(args, args_1.popScheduler(args)));
-      }
-      exports.concat = concat;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/defer.js
-  var require_defer = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/defer.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.defer = void 0;
-      var Observable_1 = require_Observable();
-      var innerFrom_1 = require_innerFrom();
-      function defer(observableFactory) {
-        return new Observable_1.Observable(function(subscriber) {
-          innerFrom_1.innerFrom(observableFactory()).subscribe(subscriber);
-        });
-      }
-      exports.defer = defer;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/connectable.js
-  var require_connectable = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/connectable.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.connectable = void 0;
-      var Subject_1 = require_Subject();
-      var Observable_1 = require_Observable();
-      var defer_1 = require_defer();
-      var DEFAULT_CONFIG = {
-        connector: function() {
-          return new Subject_1.Subject();
-        },
-        resetOnDisconnect: true
-      };
-      function connectable(source2, config4) {
-        if (config4 === void 0) {
-          config4 = DEFAULT_CONFIG;
-        }
-        var connection = null;
-        var connector = config4.connector, _a = config4.resetOnDisconnect, resetOnDisconnect = _a === void 0 ? true : _a;
-        var subject = connector();
-        var result = new Observable_1.Observable(function(subscriber) {
-          return subject.subscribe(subscriber);
-        });
-        result.connect = function() {
-          if (!connection || connection.closed) {
-            connection = defer_1.defer(function() {
-              return source2;
-            }).subscribe(subject);
-            if (resetOnDisconnect) {
-              connection.add(function() {
-                return subject = connector();
-              });
-            }
-          }
-          return connection;
-        };
-        return result;
-      }
-      exports.connectable = connectable;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/forkJoin.js
-  var require_forkJoin = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/forkJoin.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.forkJoin = void 0;
-      var Observable_1 = require_Observable();
-      var argsArgArrayOrObject_1 = require_argsArgArrayOrObject();
-      var innerFrom_1 = require_innerFrom();
-      var args_1 = require_args();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var mapOneOrManyArgs_1 = require_mapOneOrManyArgs();
-      var createObject_1 = require_createObject();
-      function forkJoin() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        var resultSelector = args_1.popResultSelector(args);
-        var _a = argsArgArrayOrObject_1.argsArgArrayOrObject(args), sources2 = _a.args, keys = _a.keys;
-        var result = new Observable_1.Observable(function(subscriber) {
-          var length = sources2.length;
-          if (!length) {
-            subscriber.complete();
-            return;
-          }
-          var values = new Array(length);
-          var remainingCompletions = length;
-          var remainingEmissions = length;
-          var _loop_1 = function(sourceIndex2) {
-            var hasValue = false;
-            innerFrom_1.innerFrom(sources2[sourceIndex2]).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-              if (!hasValue) {
-                hasValue = true;
-                remainingEmissions--;
-              }
-              values[sourceIndex2] = value;
-            }, function() {
-              return remainingCompletions--;
-            }, void 0, function() {
-              if (!remainingCompletions || !hasValue) {
-                if (!remainingEmissions) {
-                  subscriber.next(keys ? createObject_1.createObject(keys, values) : values);
-                }
-                subscriber.complete();
-              }
-            }));
-          };
-          for (var sourceIndex = 0; sourceIndex < length; sourceIndex++) {
-            _loop_1(sourceIndex);
-          }
-        });
-        return resultSelector ? result.pipe(mapOneOrManyArgs_1.mapOneOrManyArgs(resultSelector)) : result;
-      }
-      exports.forkJoin = forkJoin;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/fromEvent.js
-  var require_fromEvent = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/fromEvent.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.fromEvent = void 0;
-      var innerFrom_1 = require_innerFrom();
-      var Observable_1 = require_Observable();
-      var mergeMap_1 = require_mergeMap();
-      var isArrayLike_1 = require_isArrayLike();
-      var isFunction_1 = require_isFunction();
-      var mapOneOrManyArgs_1 = require_mapOneOrManyArgs();
-      var nodeEventEmitterMethods2 = ["addListener", "removeListener"];
-      var eventTargetMethods2 = ["addEventListener", "removeEventListener"];
-      var jqueryMethods2 = ["on", "off"];
-      function fromEvent2(target, eventName, options, resultSelector) {
-        if (isFunction_1.isFunction(options)) {
-          resultSelector = options;
-          options = void 0;
-        }
-        if (resultSelector) {
-          return fromEvent2(target, eventName, options).pipe(mapOneOrManyArgs_1.mapOneOrManyArgs(resultSelector));
-        }
-        var _a = __read3(isEventTarget2(target) ? eventTargetMethods2.map(function(methodName) {
-          return function(handler) {
-            return target[methodName](eventName, handler, options);
-          };
-        }) : isNodeStyleEventEmitter2(target) ? nodeEventEmitterMethods2.map(toCommonHandlerRegistry2(target, eventName)) : isJQueryStyleEventEmitter2(target) ? jqueryMethods2.map(toCommonHandlerRegistry2(target, eventName)) : [], 2), add = _a[0], remove = _a[1];
-        if (!add) {
-          if (isArrayLike_1.isArrayLike(target)) {
-            return mergeMap_1.mergeMap(function(subTarget) {
-              return fromEvent2(subTarget, eventName, options);
-            })(innerFrom_1.innerFrom(target));
-          }
-        }
-        if (!add) {
-          throw new TypeError("Invalid event target");
-        }
-        return new Observable_1.Observable(function(subscriber) {
-          var handler = function() {
-            var args = [];
-            for (var _i = 0; _i < arguments.length; _i++) {
-              args[_i] = arguments[_i];
-            }
-            return subscriber.next(1 < args.length ? args : args[0]);
-          };
-          add(handler);
-          return function() {
-            return remove(handler);
-          };
-        });
-      }
-      exports.fromEvent = fromEvent2;
-      function toCommonHandlerRegistry2(target, eventName) {
-        return function(methodName) {
-          return function(handler) {
-            return target[methodName](eventName, handler);
-          };
-        };
-      }
-      function isNodeStyleEventEmitter2(target) {
-        return isFunction_1.isFunction(target.addListener) && isFunction_1.isFunction(target.removeListener);
-      }
-      function isJQueryStyleEventEmitter2(target) {
-        return isFunction_1.isFunction(target.on) && isFunction_1.isFunction(target.off);
-      }
-      function isEventTarget2(target) {
-        return isFunction_1.isFunction(target.addEventListener) && isFunction_1.isFunction(target.removeEventListener);
-      }
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/fromEventPattern.js
-  var require_fromEventPattern = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/fromEventPattern.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.fromEventPattern = void 0;
-      var Observable_1 = require_Observable();
-      var isFunction_1 = require_isFunction();
-      var mapOneOrManyArgs_1 = require_mapOneOrManyArgs();
-      function fromEventPattern(addHandler, removeHandler, resultSelector) {
-        if (resultSelector) {
-          return fromEventPattern(addHandler, removeHandler).pipe(mapOneOrManyArgs_1.mapOneOrManyArgs(resultSelector));
-        }
-        return new Observable_1.Observable(function(subscriber) {
-          var handler = function() {
-            var e2 = [];
-            for (var _i = 0; _i < arguments.length; _i++) {
-              e2[_i] = arguments[_i];
-            }
-            return subscriber.next(e2.length === 1 ? e2[0] : e2);
-          };
-          var retValue = addHandler(handler);
-          return isFunction_1.isFunction(removeHandler) ? function() {
-            return removeHandler(handler, retValue);
-          } : void 0;
-        });
-      }
-      exports.fromEventPattern = fromEventPattern;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/generate.js
-  var require_generate = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/generate.js"(exports) {
-      "use strict";
-      var __generator3 = exports && exports.__generator || function(thisArg, body) {
-        var _ = { label: 0, sent: function() {
-          if (t2[0] & 1)
-            throw t2[1];
-          return t2[1];
-        }, trys: [], ops: [] }, f2, y2, t2, g2;
-        return g2 = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g2[Symbol.iterator] = function() {
-          return this;
-        }), g2;
-        function verb(n2) {
-          return function(v2) {
-            return step([n2, v2]);
-          };
-        }
-        function step(op) {
-          if (f2)
-            throw new TypeError("Generator is already executing.");
-          while (_)
-            try {
-              if (f2 = 1, y2 && (t2 = op[0] & 2 ? y2["return"] : op[0] ? y2["throw"] || ((t2 = y2["return"]) && t2.call(y2), 0) : y2.next) && !(t2 = t2.call(y2, op[1])).done)
-                return t2;
-              if (y2 = 0, t2)
-                op = [op[0] & 2, t2.value];
-              switch (op[0]) {
-                case 0:
-                case 1:
-                  t2 = op;
-                  break;
-                case 4:
-                  _.label++;
-                  return { value: op[1], done: false };
-                case 5:
-                  _.label++;
-                  y2 = op[1];
-                  op = [0];
-                  continue;
-                case 7:
-                  op = _.ops.pop();
-                  _.trys.pop();
-                  continue;
-                default:
-                  if (!(t2 = _.trys, t2 = t2.length > 0 && t2[t2.length - 1]) && (op[0] === 6 || op[0] === 2)) {
-                    _ = 0;
-                    continue;
-                  }
-                  if (op[0] === 3 && (!t2 || op[1] > t2[0] && op[1] < t2[3])) {
-                    _.label = op[1];
-                    break;
-                  }
-                  if (op[0] === 6 && _.label < t2[1]) {
-                    _.label = t2[1];
-                    t2 = op;
-                    break;
-                  }
-                  if (t2 && _.label < t2[2]) {
-                    _.label = t2[2];
-                    _.ops.push(op);
-                    break;
-                  }
-                  if (t2[2])
-                    _.ops.pop();
-                  _.trys.pop();
-                  continue;
-              }
-              op = body.call(thisArg, _);
-            } catch (e2) {
-              op = [6, e2];
-              y2 = 0;
-            } finally {
-              f2 = t2 = 0;
-            }
-          if (op[0] & 5)
-            throw op[1];
-          return { value: op[0] ? op[1] : void 0, done: true };
-        }
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.generate = void 0;
-      var identity_1 = require_identity();
-      var isScheduler_1 = require_isScheduler();
-      var defer_1 = require_defer();
-      var scheduleIterable_1 = require_scheduleIterable();
-      function generate(initialStateOrOptions, condition, iterate, resultSelectorOrScheduler, scheduler) {
-        var _a, _b;
-        var resultSelector;
-        var initialState;
-        if (arguments.length === 1) {
-          _a = initialStateOrOptions, initialState = _a.initialState, condition = _a.condition, iterate = _a.iterate, _b = _a.resultSelector, resultSelector = _b === void 0 ? identity_1.identity : _b, scheduler = _a.scheduler;
-        } else {
-          initialState = initialStateOrOptions;
-          if (!resultSelectorOrScheduler || isScheduler_1.isScheduler(resultSelectorOrScheduler)) {
-            resultSelector = identity_1.identity;
-            scheduler = resultSelectorOrScheduler;
-          } else {
-            resultSelector = resultSelectorOrScheduler;
-          }
-        }
-        function gen() {
-          var state;
-          return __generator3(this, function(_a2) {
-            switch (_a2.label) {
-              case 0:
-                state = initialState;
-                _a2.label = 1;
-              case 1:
-                if (!(!condition || condition(state)))
-                  return [3, 4];
-                return [4, resultSelector(state)];
-              case 2:
-                _a2.sent();
-                _a2.label = 3;
-              case 3:
-                state = iterate(state);
-                return [3, 1];
-              case 4:
-                return [2];
-            }
-          });
-        }
-        return defer_1.defer(scheduler ? function() {
-          return scheduleIterable_1.scheduleIterable(gen(), scheduler);
-        } : gen);
-      }
-      exports.generate = generate;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/iif.js
-  var require_iif = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/iif.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.iif = void 0;
-      var defer_1 = require_defer();
-      function iif(condition, trueResult, falseResult) {
-        return defer_1.defer(function() {
-          return condition() ? trueResult : falseResult;
-        });
-      }
-      exports.iif = iif;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/timer.js
-  var require_timer = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/timer.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.timer = void 0;
-      var Observable_1 = require_Observable();
-      var async_1 = require_async();
-      var isScheduler_1 = require_isScheduler();
-      var isDate_1 = require_isDate();
-      function timer2(dueTime, intervalOrScheduler, scheduler) {
-        if (dueTime === void 0) {
-          dueTime = 0;
-        }
-        if (scheduler === void 0) {
-          scheduler = async_1.async;
-        }
-        var intervalDuration = -1;
-        if (intervalOrScheduler != null) {
-          if (isScheduler_1.isScheduler(intervalOrScheduler)) {
-            scheduler = intervalOrScheduler;
-          } else {
-            intervalDuration = intervalOrScheduler;
-          }
-        }
-        return new Observable_1.Observable(function(subscriber) {
-          var due = isDate_1.isValidDate(dueTime) ? +dueTime - scheduler.now() : dueTime;
-          if (due < 0) {
-            due = 0;
-          }
-          var n2 = 0;
-          return scheduler.schedule(function() {
-            if (!subscriber.closed) {
-              subscriber.next(n2++);
-              if (0 <= intervalDuration) {
-                this.schedule(void 0, intervalDuration);
-              } else {
-                subscriber.complete();
-              }
-            }
-          }, due);
-        });
-      }
-      exports.timer = timer2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/interval.js
-  var require_interval = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/interval.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.interval = void 0;
-      var async_1 = require_async();
-      var timer_1 = require_timer();
-      function interval2(period, scheduler) {
-        if (period === void 0) {
-          period = 0;
-        }
-        if (scheduler === void 0) {
-          scheduler = async_1.asyncScheduler;
-        }
-        if (period < 0) {
-          period = 0;
-        }
-        return timer_1.timer(period, period, scheduler);
-      }
-      exports.interval = interval2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/merge.js
-  var require_merge = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/merge.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.merge = void 0;
-      var mergeAll_1 = require_mergeAll();
-      var innerFrom_1 = require_innerFrom();
-      var empty_1 = require_empty();
-      var args_1 = require_args();
-      var from_1 = require_from();
-      function merge3() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        var scheduler = args_1.popScheduler(args);
-        var concurrent = args_1.popNumber(args, Infinity);
-        var sources2 = args;
-        return !sources2.length ? empty_1.EMPTY : sources2.length === 1 ? innerFrom_1.innerFrom(sources2[0]) : mergeAll_1.mergeAll(concurrent)(from_1.from(sources2, scheduler));
-      }
-      exports.merge = merge3;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/never.js
-  var require_never = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/never.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.never = exports.NEVER = void 0;
-      var Observable_1 = require_Observable();
-      var noop_1 = require_noop();
-      exports.NEVER = new Observable_1.Observable(noop_1.noop);
-      function never() {
-        return exports.NEVER;
-      }
-      exports.never = never;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsOrArgArray.js
-  var require_argsOrArgArray = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsOrArgArray.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.argsOrArgArray = void 0;
-      var isArray3 = Array.isArray;
-      function argsOrArgArray(args) {
-        return args.length === 1 && isArray3(args[0]) ? args[0] : args;
-      }
-      exports.argsOrArgArray = argsOrArgArray;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/onErrorResumeNext.js
-  var require_onErrorResumeNext = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/onErrorResumeNext.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.onErrorResumeNext = void 0;
-      var Observable_1 = require_Observable();
-      var argsOrArgArray_1 = require_argsOrArgArray();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var noop_1 = require_noop();
-      var innerFrom_1 = require_innerFrom();
-      function onErrorResumeNext() {
-        var sources2 = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          sources2[_i] = arguments[_i];
-        }
-        var nextSources = argsOrArgArray_1.argsOrArgArray(sources2);
-        return new Observable_1.Observable(function(subscriber) {
-          var sourceIndex = 0;
-          var subscribeNext = function() {
-            if (sourceIndex < nextSources.length) {
-              var nextSource = void 0;
-              try {
-                nextSource = innerFrom_1.innerFrom(nextSources[sourceIndex++]);
-              } catch (err) {
-                subscribeNext();
-                return;
-              }
-              var innerSubscriber = new OperatorSubscriber_1.OperatorSubscriber(subscriber, void 0, noop_1.noop, noop_1.noop);
-              nextSource.subscribe(innerSubscriber);
-              innerSubscriber.add(subscribeNext);
-            } else {
-              subscriber.complete();
-            }
-          };
-          subscribeNext();
-        });
-      }
-      exports.onErrorResumeNext = onErrorResumeNext;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/pairs.js
-  var require_pairs = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/pairs.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.pairs = void 0;
-      var from_1 = require_from();
-      function pairs(obj, scheduler) {
-        return from_1.from(Object.entries(obj), scheduler);
-      }
-      exports.pairs = pairs;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/not.js
-  var require_not = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/not.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.not = void 0;
-      function not(pred, thisArg) {
-        return function(value, index) {
-          return !pred.call(thisArg, value, index);
-        };
-      }
-      exports.not = not;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/filter.js
-  var require_filter = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/filter.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.filter = void 0;
-      var lift_1 = require_lift();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      function filter2(predicate, thisArg) {
-        return lift_1.operate(function(source2, subscriber) {
-          var index = 0;
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            return predicate.call(thisArg, value, index++) && subscriber.next(value);
-          }));
-        });
-      }
-      exports.filter = filter2;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/partition.js
-  var require_partition = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/partition.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.partition = void 0;
-      var not_1 = require_not();
-      var filter_1 = require_filter();
-      var innerFrom_1 = require_innerFrom();
-      function partition(source2, predicate, thisArg) {
-        return [filter_1.filter(predicate, thisArg)(innerFrom_1.innerFrom(source2)), filter_1.filter(not_1.not(predicate, thisArg))(innerFrom_1.innerFrom(source2))];
-      }
-      exports.partition = partition;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/race.js
-  var require_race = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/race.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.raceInit = exports.race = void 0;
-      var Observable_1 = require_Observable();
-      var innerFrom_1 = require_innerFrom();
-      var argsOrArgArray_1 = require_argsOrArgArray();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      function race() {
-        var sources2 = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          sources2[_i] = arguments[_i];
-        }
-        sources2 = argsOrArgArray_1.argsOrArgArray(sources2);
-        return sources2.length === 1 ? innerFrom_1.innerFrom(sources2[0]) : new Observable_1.Observable(raceInit(sources2));
-      }
-      exports.race = race;
-      function raceInit(sources2) {
-        return function(subscriber) {
-          var subscriptions = [];
-          var _loop_1 = function(i3) {
-            subscriptions.push(innerFrom_1.innerFrom(sources2[i3]).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-              if (subscriptions) {
-                for (var s2 = 0; s2 < subscriptions.length; s2++) {
-                  s2 !== i3 && subscriptions[s2].unsubscribe();
-                }
-                subscriptions = null;
-              }
-              subscriber.next(value);
-            })));
-          };
-          for (var i2 = 0; subscriptions && !subscriber.closed && i2 < sources2.length; i2++) {
-            _loop_1(i2);
-          }
-        };
-      }
-      exports.raceInit = raceInit;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/range.js
-  var require_range = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/range.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.range = void 0;
-      var Observable_1 = require_Observable();
-      var empty_1 = require_empty();
-      function range(start, count2, scheduler) {
-        if (count2 == null) {
-          count2 = start;
-          start = 0;
-        }
-        if (count2 <= 0) {
-          return empty_1.EMPTY;
-        }
-        var end = count2 + start;
-        return new Observable_1.Observable(scheduler ? function(subscriber) {
-          var n2 = start;
-          return scheduler.schedule(function() {
-            if (n2 < end) {
-              subscriber.next(n2++);
-              this.schedule();
-            } else {
-              subscriber.complete();
-            }
-          });
-        } : function(subscriber) {
-          var n2 = start;
-          while (n2 < end && !subscriber.closed) {
-            subscriber.next(n2++);
-          }
-          subscriber.complete();
-        });
-      }
-      exports.range = range;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/using.js
-  var require_using = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/using.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.using = void 0;
-      var Observable_1 = require_Observable();
-      var innerFrom_1 = require_innerFrom();
-      var empty_1 = require_empty();
-      function using(resourceFactory, observableFactory) {
-        return new Observable_1.Observable(function(subscriber) {
-          var resource = resourceFactory();
-          var result = observableFactory(resource);
-          var source2 = result ? innerFrom_1.innerFrom(result) : empty_1.EMPTY;
-          source2.subscribe(subscriber);
-          return function() {
-            if (resource) {
-              resource.unsubscribe();
-            }
-          };
-        });
-      }
-      exports.using = using;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/zip.js
-  var require_zip = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/zip.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.zip = void 0;
-      var Observable_1 = require_Observable();
-      var innerFrom_1 = require_innerFrom();
-      var argsOrArgArray_1 = require_argsOrArgArray();
-      var empty_1 = require_empty();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var args_1 = require_args();
-      function zip() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        var resultSelector = args_1.popResultSelector(args);
-        var sources2 = argsOrArgArray_1.argsOrArgArray(args);
-        return sources2.length ? new Observable_1.Observable(function(subscriber) {
-          var buffers = sources2.map(function() {
-            return [];
-          });
-          var completed = sources2.map(function() {
-            return false;
-          });
-          subscriber.add(function() {
-            buffers = completed = null;
-          });
-          var _loop_1 = function(sourceIndex2) {
-            innerFrom_1.innerFrom(sources2[sourceIndex2]).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-              buffers[sourceIndex2].push(value);
-              if (buffers.every(function(buffer) {
-                return buffer.length;
-              })) {
-                var result = buffers.map(function(buffer) {
-                  return buffer.shift();
-                });
-                subscriber.next(resultSelector ? resultSelector.apply(void 0, __spreadArray3([], __read3(result))) : result);
-                if (buffers.some(function(buffer, i2) {
-                  return !buffer.length && completed[i2];
-                })) {
-                  subscriber.complete();
-                }
-              }
-            }, function() {
-              completed[sourceIndex2] = true;
-              !buffers[sourceIndex2].length && subscriber.complete();
-            }));
-          };
-          for (var sourceIndex = 0; !subscriber.closed && sourceIndex < sources2.length; sourceIndex++) {
-            _loop_1(sourceIndex);
-          }
-          return function() {
-            buffers = completed = null;
-          };
-        }) : empty_1.EMPTY;
-      }
-      exports.zip = zip;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/types.js
-  var require_types = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/types.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/audit.js
-  var require_audit = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/audit.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.audit = void 0;
-      var lift_1 = require_lift();
-      var innerFrom_1 = require_innerFrom();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      function audit(durationSelector) {
-        return lift_1.operate(function(source2, subscriber) {
-          var hasValue = false;
-          var lastValue = null;
-          var durationSubscriber = null;
-          var isComplete = false;
-          var endDuration = function() {
-            durationSubscriber === null || durationSubscriber === void 0 ? void 0 : durationSubscriber.unsubscribe();
-            durationSubscriber = null;
-            if (hasValue) {
-              hasValue = false;
-              var value = lastValue;
-              lastValue = null;
-              subscriber.next(value);
-            }
-            isComplete && subscriber.complete();
-          };
-          var cleanupDuration = function() {
-            durationSubscriber = null;
-            isComplete && subscriber.complete();
-          };
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            hasValue = true;
-            lastValue = value;
-            if (!durationSubscriber) {
-              innerFrom_1.innerFrom(durationSelector(value)).subscribe(durationSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, endDuration, cleanupDuration));
-            }
-          }, function() {
-            isComplete = true;
-            (!hasValue || !durationSubscriber || durationSubscriber.closed) && subscriber.complete();
-          }));
-        });
-      }
-      exports.audit = audit;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/auditTime.js
-  var require_auditTime = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/auditTime.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.auditTime = void 0;
-      var async_1 = require_async();
-      var audit_1 = require_audit();
-      var timer_1 = require_timer();
-      function auditTime(duration, scheduler) {
-        if (scheduler === void 0) {
-          scheduler = async_1.asyncScheduler;
-        }
-        return audit_1.audit(function() {
-          return timer_1.timer(duration, scheduler);
-        });
-      }
-      exports.auditTime = auditTime;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/buffer.js
-  var require_buffer = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/buffer.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.buffer = void 0;
-      var lift_1 = require_lift();
-      var noop_1 = require_noop();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var innerFrom_1 = require_innerFrom();
-      function buffer(closingNotifier) {
-        return lift_1.operate(function(source2, subscriber) {
-          var currentBuffer = [];
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            return currentBuffer.push(value);
-          }, function() {
-            subscriber.next(currentBuffer);
-            subscriber.complete();
-          }));
-          innerFrom_1.innerFrom(closingNotifier).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function() {
-            var b2 = currentBuffer;
-            currentBuffer = [];
-            subscriber.next(b2);
-          }, noop_1.noop));
-          return function() {
-            currentBuffer = null;
-          };
-        });
-      }
-      exports.buffer = buffer;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferCount.js
-  var require_bufferCount = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferCount.js"(exports) {
-      "use strict";
-      var __values3 = exports && exports.__values || function(o2) {
-        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
-        if (m2)
-          return m2.call(o2);
-        if (o2 && typeof o2.length === "number")
-          return {
-            next: function() {
-              if (o2 && i2 >= o2.length)
-                o2 = void 0;
-              return { value: o2 && o2[i2++], done: !o2 };
-            }
-          };
-        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bufferCount = void 0;
-      var lift_1 = require_lift();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var arrRemove_1 = require_arrRemove();
-      function bufferCount(bufferSize, startBufferEvery) {
-        if (startBufferEvery === void 0) {
-          startBufferEvery = null;
-        }
-        startBufferEvery = startBufferEvery !== null && startBufferEvery !== void 0 ? startBufferEvery : bufferSize;
-        return lift_1.operate(function(source2, subscriber) {
-          var buffers = [];
-          var count2 = 0;
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            var e_1, _a, e_2, _b;
-            var toEmit = null;
-            if (count2++ % startBufferEvery === 0) {
-              buffers.push([]);
-            }
-            try {
-              for (var buffers_1 = __values3(buffers), buffers_1_1 = buffers_1.next(); !buffers_1_1.done; buffers_1_1 = buffers_1.next()) {
-                var buffer = buffers_1_1.value;
-                buffer.push(value);
-                if (bufferSize <= buffer.length) {
-                  toEmit = toEmit !== null && toEmit !== void 0 ? toEmit : [];
-                  toEmit.push(buffer);
-                }
-              }
-            } catch (e_1_1) {
-              e_1 = { error: e_1_1 };
-            } finally {
-              try {
-                if (buffers_1_1 && !buffers_1_1.done && (_a = buffers_1.return))
-                  _a.call(buffers_1);
-              } finally {
-                if (e_1)
-                  throw e_1.error;
-              }
-            }
-            if (toEmit) {
-              try {
-                for (var toEmit_1 = __values3(toEmit), toEmit_1_1 = toEmit_1.next(); !toEmit_1_1.done; toEmit_1_1 = toEmit_1.next()) {
-                  var buffer = toEmit_1_1.value;
-                  arrRemove_1.arrRemove(buffers, buffer);
-                  subscriber.next(buffer);
-                }
-              } catch (e_2_1) {
-                e_2 = { error: e_2_1 };
-              } finally {
-                try {
-                  if (toEmit_1_1 && !toEmit_1_1.done && (_b = toEmit_1.return))
-                    _b.call(toEmit_1);
-                } finally {
-                  if (e_2)
-                    throw e_2.error;
-                }
-              }
-            }
-          }, function() {
-            var e_3, _a;
-            try {
-              for (var buffers_2 = __values3(buffers), buffers_2_1 = buffers_2.next(); !buffers_2_1.done; buffers_2_1 = buffers_2.next()) {
-                var buffer = buffers_2_1.value;
-                subscriber.next(buffer);
-              }
-            } catch (e_3_1) {
-              e_3 = { error: e_3_1 };
-            } finally {
-              try {
-                if (buffers_2_1 && !buffers_2_1.done && (_a = buffers_2.return))
-                  _a.call(buffers_2);
-              } finally {
-                if (e_3)
-                  throw e_3.error;
-              }
-            }
-            subscriber.complete();
-          }, void 0, function() {
-            buffers = null;
-          }));
-        });
-      }
-      exports.bufferCount = bufferCount;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferTime.js
-  var require_bufferTime = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferTime.js"(exports) {
-      "use strict";
-      var __values3 = exports && exports.__values || function(o2) {
-        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
-        if (m2)
-          return m2.call(o2);
-        if (o2 && typeof o2.length === "number")
-          return {
-            next: function() {
-              if (o2 && i2 >= o2.length)
-                o2 = void 0;
-              return { value: o2 && o2[i2++], done: !o2 };
-            }
-          };
-        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bufferTime = void 0;
-      var Subscription_1 = require_Subscription();
-      var lift_1 = require_lift();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var arrRemove_1 = require_arrRemove();
-      var async_1 = require_async();
-      var args_1 = require_args();
-      var executeSchedule_1 = require_executeSchedule();
-      function bufferTime(bufferTimeSpan) {
-        var _a, _b;
-        var otherArgs = [];
-        for (var _i = 1; _i < arguments.length; _i++) {
-          otherArgs[_i - 1] = arguments[_i];
-        }
-        var scheduler = (_a = args_1.popScheduler(otherArgs)) !== null && _a !== void 0 ? _a : async_1.asyncScheduler;
-        var bufferCreationInterval = (_b = otherArgs[0]) !== null && _b !== void 0 ? _b : null;
-        var maxBufferSize = otherArgs[1] || Infinity;
-        return lift_1.operate(function(source2, subscriber) {
-          var bufferRecords = [];
-          var restartOnEmit = false;
-          var emit = function(record) {
-            var buffer = record.buffer, subs = record.subs;
-            subs.unsubscribe();
-            arrRemove_1.arrRemove(bufferRecords, record);
-            subscriber.next(buffer);
-            restartOnEmit && startBuffer();
-          };
-          var startBuffer = function() {
-            if (bufferRecords) {
-              var subs = new Subscription_1.Subscription();
-              subscriber.add(subs);
-              var buffer = [];
-              var record_1 = {
-                buffer,
-                subs
-              };
-              bufferRecords.push(record_1);
-              executeSchedule_1.executeSchedule(subs, scheduler, function() {
-                return emit(record_1);
-              }, bufferTimeSpan);
-            }
-          };
-          if (bufferCreationInterval !== null && bufferCreationInterval >= 0) {
-            executeSchedule_1.executeSchedule(subscriber, scheduler, startBuffer, bufferCreationInterval, true);
-          } else {
-            restartOnEmit = true;
-          }
-          startBuffer();
-          var bufferTimeSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            var e_1, _a2;
-            var recordsCopy = bufferRecords.slice();
-            try {
-              for (var recordsCopy_1 = __values3(recordsCopy), recordsCopy_1_1 = recordsCopy_1.next(); !recordsCopy_1_1.done; recordsCopy_1_1 = recordsCopy_1.next()) {
-                var record = recordsCopy_1_1.value;
-                var buffer = record.buffer;
-                buffer.push(value);
-                maxBufferSize <= buffer.length && emit(record);
-              }
-            } catch (e_1_1) {
-              e_1 = { error: e_1_1 };
-            } finally {
-              try {
-                if (recordsCopy_1_1 && !recordsCopy_1_1.done && (_a2 = recordsCopy_1.return))
-                  _a2.call(recordsCopy_1);
-              } finally {
-                if (e_1)
-                  throw e_1.error;
-              }
-            }
-          }, function() {
-            while (bufferRecords === null || bufferRecords === void 0 ? void 0 : bufferRecords.length) {
-              subscriber.next(bufferRecords.shift().buffer);
-            }
-            bufferTimeSubscriber === null || bufferTimeSubscriber === void 0 ? void 0 : bufferTimeSubscriber.unsubscribe();
-            subscriber.complete();
-            subscriber.unsubscribe();
-          }, void 0, function() {
-            return bufferRecords = null;
-          });
-          source2.subscribe(bufferTimeSubscriber);
-        });
-      }
-      exports.bufferTime = bufferTime;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferToggle.js
-  var require_bufferToggle = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferToggle.js"(exports) {
-      "use strict";
-      var __values3 = exports && exports.__values || function(o2) {
-        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
-        if (m2)
-          return m2.call(o2);
-        if (o2 && typeof o2.length === "number")
-          return {
-            next: function() {
-              if (o2 && i2 >= o2.length)
-                o2 = void 0;
-              return { value: o2 && o2[i2++], done: !o2 };
-            }
-          };
-        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bufferToggle = void 0;
-      var Subscription_1 = require_Subscription();
-      var lift_1 = require_lift();
-      var innerFrom_1 = require_innerFrom();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var noop_1 = require_noop();
-      var arrRemove_1 = require_arrRemove();
-      function bufferToggle(openings, closingSelector) {
-        return lift_1.operate(function(source2, subscriber) {
-          var buffers = [];
-          innerFrom_1.innerFrom(openings).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(openValue) {
-            var buffer = [];
-            buffers.push(buffer);
-            var closingSubscription = new Subscription_1.Subscription();
-            var emitBuffer = function() {
-              arrRemove_1.arrRemove(buffers, buffer);
-              subscriber.next(buffer);
-              closingSubscription.unsubscribe();
-            };
-            closingSubscription.add(innerFrom_1.innerFrom(closingSelector(openValue)).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, emitBuffer, noop_1.noop)));
-          }, noop_1.noop));
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            var e_1, _a;
-            try {
-              for (var buffers_1 = __values3(buffers), buffers_1_1 = buffers_1.next(); !buffers_1_1.done; buffers_1_1 = buffers_1.next()) {
-                var buffer = buffers_1_1.value;
-                buffer.push(value);
-              }
-            } catch (e_1_1) {
-              e_1 = { error: e_1_1 };
-            } finally {
-              try {
-                if (buffers_1_1 && !buffers_1_1.done && (_a = buffers_1.return))
-                  _a.call(buffers_1);
-              } finally {
-                if (e_1)
-                  throw e_1.error;
-              }
-            }
-          }, function() {
-            while (buffers.length > 0) {
-              subscriber.next(buffers.shift());
-            }
-            subscriber.complete();
-          }));
-        });
-      }
-      exports.bufferToggle = bufferToggle;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferWhen.js
-  var require_bufferWhen = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/bufferWhen.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.bufferWhen = void 0;
-      var lift_1 = require_lift();
-      var noop_1 = require_noop();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var innerFrom_1 = require_innerFrom();
-      function bufferWhen(closingSelector) {
-        return lift_1.operate(function(source2, subscriber) {
-          var buffer = null;
-          var closingSubscriber = null;
-          var openBuffer = function() {
-            closingSubscriber === null || closingSubscriber === void 0 ? void 0 : closingSubscriber.unsubscribe();
-            var b2 = buffer;
-            buffer = [];
-            b2 && subscriber.next(b2);
-            innerFrom_1.innerFrom(closingSelector()).subscribe(closingSubscriber = OperatorSubscriber_1.createOperatorSubscriber(subscriber, openBuffer, noop_1.noop));
-          };
-          openBuffer();
-          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
-            return buffer === null || buffer === void 0 ? void 0 : buffer.push(value);
-          }, function() {
-            buffer && subscriber.next(buffer);
-            subscriber.complete();
-          }, void 0, function() {
-            return buffer = closingSubscriber = null;
-          }));
-        });
-      }
-      exports.bufferWhen = bufferWhen;
-    }
-  });
-
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/catchError.js
-  var require_catchError = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/catchError.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.catchError = void 0;
-      var innerFrom_1 = require_innerFrom();
-      var OperatorSubscriber_1 = require_OperatorSubscriber();
-      var lift_1 = require_lift();
-      function catchError(selector) {
-        return lift_1.operate(function(source2, subscriber) {
-          var innerSub = null;
-          var syncUnsub = false;
-          var handledResult;
-          innerSub = source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, void 0, void 0, function(err) {
-            handledResult = innerFrom_1.innerFrom(selector(err, catchError(selector)(source2)));
-            if (innerSub) {
-              innerSub.unsubscribe();
-              innerSub = null;
-              handledResult.subscribe(subscriber);
-            } else {
-              syncUnsub = true;
-            }
-          }));
-          if (syncUnsub) {
-            innerSub.unsubscribe();
-            innerSub = null;
-            handledResult.subscribe(subscriber);
-          }
-        });
-      }
-      exports.catchError = catchError;
-    }
-  });
-
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/scanInternals.js
   var require_scanInternals = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/scanInternals.js"(exports) {
@@ -40437,6 +39327,20 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsOrArgArray.js
+  var require_argsOrArgArray = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/argsOrArgArray.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.argsOrArgArray = void 0;
+      var isArray3 = Array.isArray;
+      function argsOrArgArray(args) {
+        return args.length === 1 && isArray3(args[0]) ? args[0] : args;
+      }
+      exports.argsOrArgArray = argsOrArgArray;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/combineLatest.js
   var require_combineLatest2 = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/combineLatest.js"(exports) {
@@ -40533,42 +39437,40 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMap.js
-  var require_concatMap = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMap.js"(exports) {
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeAll.js
+  var require_mergeAll = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeAll.js"(exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.concatMap = void 0;
+      exports.mergeAll = void 0;
       var mergeMap_1 = require_mergeMap();
-      var isFunction_1 = require_isFunction();
-      function concatMap(project, resultSelector) {
-        return isFunction_1.isFunction(resultSelector) ? mergeMap_1.mergeMap(project, resultSelector, 1) : mergeMap_1.mergeMap(project, 1);
+      var identity_1 = require_identity();
+      function mergeAll3(concurrent) {
+        if (concurrent === void 0) {
+          concurrent = Infinity;
+        }
+        return mergeMap_1.mergeMap(identity_1.identity, concurrent);
       }
-      exports.concatMap = concatMap;
+      exports.mergeAll = mergeAll3;
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMapTo.js
-  var require_concatMapTo = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMapTo.js"(exports) {
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatAll.js
+  var require_concatAll = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatAll.js"(exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.concatMapTo = void 0;
-      var concatMap_1 = require_concatMap();
-      var isFunction_1 = require_isFunction();
-      function concatMapTo(innerObservable, resultSelector) {
-        return isFunction_1.isFunction(resultSelector) ? concatMap_1.concatMap(function() {
-          return innerObservable;
-        }, resultSelector) : concatMap_1.concatMap(function() {
-          return innerObservable;
-        });
+      exports.concatAll = void 0;
+      var mergeAll_1 = require_mergeAll();
+      function concatAll() {
+        return mergeAll_1.mergeAll(1);
       }
-      exports.concatMapTo = concatMapTo;
+      exports.concatAll = concatAll;
     }
   });
 
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concat.js
-  var require_concat2 = __commonJS({
+  var require_concat = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concat.js"(exports) {
       "use strict";
       var __read3 = exports && exports.__read || function(o2, n2) {
@@ -40617,6 +39519,40 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMap.js
+  var require_concatMap = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMap.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.concatMap = void 0;
+      var mergeMap_1 = require_mergeMap();
+      var isFunction_1 = require_isFunction();
+      function concatMap(project, resultSelector) {
+        return isFunction_1.isFunction(resultSelector) ? mergeMap_1.mergeMap(project, resultSelector, 1) : mergeMap_1.mergeMap(project, 1);
+      }
+      exports.concatMap = concatMap;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMapTo.js
+  var require_concatMapTo = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatMapTo.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.concatMapTo = void 0;
+      var concatMap_1 = require_concatMap();
+      var isFunction_1 = require_isFunction();
+      function concatMapTo(innerObservable, resultSelector) {
+        return isFunction_1.isFunction(resultSelector) ? concatMap_1.concatMap(function() {
+          return innerObservable;
+        }, resultSelector) : concatMap_1.concatMap(function() {
+          return innerObservable;
+        });
+      }
+      exports.concatMapTo = concatMapTo;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatWith.js
   var require_concatWith = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/concatWith.js"(exports) {
@@ -40649,7 +39585,7 @@ ${parts.join("\n")}
       };
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.concatWith = void 0;
-      var concat_1 = require_concat2();
+      var concat_1 = require_concat();
       function concatWith() {
         var otherSources = [];
         for (var _i = 0; _i < arguments.length; _i++) {
@@ -40658,6 +39594,229 @@ ${parts.join("\n")}
         return concat_1.concat.apply(void 0, __spreadArray3([], __read3(otherSources)));
       }
       exports.concatWith = concatWith;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ObjectUnsubscribedError.js
+  var require_ObjectUnsubscribedError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ObjectUnsubscribedError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.ObjectUnsubscribedError = void 0;
+      var createErrorClass_1 = require_createErrorClass();
+      exports.ObjectUnsubscribedError = createErrorClass_1.createErrorClass(function(_super) {
+        return function ObjectUnsubscribedErrorImpl() {
+          _super(this);
+          this.name = "ObjectUnsubscribedError";
+          this.message = "object unsubscribed";
+        };
+      });
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Subject.js
+  var require_Subject = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Subject.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      var __values3 = exports && exports.__values || function(o2) {
+        var s2 = typeof Symbol === "function" && Symbol.iterator, m2 = s2 && o2[s2], i2 = 0;
+        if (m2)
+          return m2.call(o2);
+        if (o2 && typeof o2.length === "number")
+          return {
+            next: function() {
+              if (o2 && i2 >= o2.length)
+                o2 = void 0;
+              return { value: o2 && o2[i2++], done: !o2 };
+            }
+          };
+        throw new TypeError(s2 ? "Object is not iterable." : "Symbol.iterator is not defined.");
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.AnonymousSubject = exports.Subject = void 0;
+      var Observable_1 = require_Observable();
+      var Subscription_1 = require_Subscription();
+      var ObjectUnsubscribedError_1 = require_ObjectUnsubscribedError();
+      var arrRemove_1 = require_arrRemove();
+      var errorContext_1 = require_errorContext();
+      var Subject3 = function(_super) {
+        __extends3(Subject4, _super);
+        function Subject4() {
+          var _this = _super.call(this) || this;
+          _this.closed = false;
+          _this.currentObservers = null;
+          _this.observers = [];
+          _this.isStopped = false;
+          _this.hasError = false;
+          _this.thrownError = null;
+          return _this;
+        }
+        Subject4.prototype.lift = function(operator) {
+          var subject = new AnonymousSubject3(this, this);
+          subject.operator = operator;
+          return subject;
+        };
+        Subject4.prototype._throwIfClosed = function() {
+          if (this.closed) {
+            throw new ObjectUnsubscribedError_1.ObjectUnsubscribedError();
+          }
+        };
+        Subject4.prototype.next = function(value) {
+          var _this = this;
+          errorContext_1.errorContext(function() {
+            var e_1, _a;
+            _this._throwIfClosed();
+            if (!_this.isStopped) {
+              if (!_this.currentObservers) {
+                _this.currentObservers = Array.from(_this.observers);
+              }
+              try {
+                for (var _b = __values3(_this.currentObservers), _c = _b.next(); !_c.done; _c = _b.next()) {
+                  var observer = _c.value;
+                  observer.next(value);
+                }
+              } catch (e_1_1) {
+                e_1 = { error: e_1_1 };
+              } finally {
+                try {
+                  if (_c && !_c.done && (_a = _b.return))
+                    _a.call(_b);
+                } finally {
+                  if (e_1)
+                    throw e_1.error;
+                }
+              }
+            }
+          });
+        };
+        Subject4.prototype.error = function(err) {
+          var _this = this;
+          errorContext_1.errorContext(function() {
+            _this._throwIfClosed();
+            if (!_this.isStopped) {
+              _this.hasError = _this.isStopped = true;
+              _this.thrownError = err;
+              var observers = _this.observers;
+              while (observers.length) {
+                observers.shift().error(err);
+              }
+            }
+          });
+        };
+        Subject4.prototype.complete = function() {
+          var _this = this;
+          errorContext_1.errorContext(function() {
+            _this._throwIfClosed();
+            if (!_this.isStopped) {
+              _this.isStopped = true;
+              var observers = _this.observers;
+              while (observers.length) {
+                observers.shift().complete();
+              }
+            }
+          });
+        };
+        Subject4.prototype.unsubscribe = function() {
+          this.isStopped = this.closed = true;
+          this.observers = this.currentObservers = null;
+        };
+        Object.defineProperty(Subject4.prototype, "observed", {
+          get: function() {
+            var _a;
+            return ((_a = this.observers) === null || _a === void 0 ? void 0 : _a.length) > 0;
+          },
+          enumerable: false,
+          configurable: true
+        });
+        Subject4.prototype._trySubscribe = function(subscriber) {
+          this._throwIfClosed();
+          return _super.prototype._trySubscribe.call(this, subscriber);
+        };
+        Subject4.prototype._subscribe = function(subscriber) {
+          this._throwIfClosed();
+          this._checkFinalizedStatuses(subscriber);
+          return this._innerSubscribe(subscriber);
+        };
+        Subject4.prototype._innerSubscribe = function(subscriber) {
+          var _this = this;
+          var _a = this, hasError = _a.hasError, isStopped = _a.isStopped, observers = _a.observers;
+          if (hasError || isStopped) {
+            return Subscription_1.EMPTY_SUBSCRIPTION;
+          }
+          this.currentObservers = null;
+          observers.push(subscriber);
+          return new Subscription_1.Subscription(function() {
+            _this.currentObservers = null;
+            arrRemove_1.arrRemove(observers, subscriber);
+          });
+        };
+        Subject4.prototype._checkFinalizedStatuses = function(subscriber) {
+          var _a = this, hasError = _a.hasError, thrownError = _a.thrownError, isStopped = _a.isStopped;
+          if (hasError) {
+            subscriber.error(thrownError);
+          } else if (isStopped) {
+            subscriber.complete();
+          }
+        };
+        Subject4.prototype.asObservable = function() {
+          var observable3 = new Observable_1.Observable();
+          observable3.source = this;
+          return observable3;
+        };
+        Subject4.create = function(destination, source2) {
+          return new AnonymousSubject3(destination, source2);
+        };
+        return Subject4;
+      }(Observable_1.Observable);
+      exports.Subject = Subject3;
+      var AnonymousSubject3 = function(_super) {
+        __extends3(AnonymousSubject4, _super);
+        function AnonymousSubject4(destination, source2) {
+          var _this = _super.call(this) || this;
+          _this.destination = destination;
+          _this.source = source2;
+          return _this;
+        }
+        AnonymousSubject4.prototype.next = function(value) {
+          var _a, _b;
+          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.next) === null || _b === void 0 ? void 0 : _b.call(_a, value);
+        };
+        AnonymousSubject4.prototype.error = function(err) {
+          var _a, _b;
+          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.error) === null || _b === void 0 ? void 0 : _b.call(_a, err);
+        };
+        AnonymousSubject4.prototype.complete = function() {
+          var _a, _b;
+          (_b = (_a = this.destination) === null || _a === void 0 ? void 0 : _a.complete) === null || _b === void 0 ? void 0 : _b.call(_a);
+        };
+        AnonymousSubject4.prototype._subscribe = function(subscriber) {
+          var _a, _b;
+          return (_b = (_a = this.source) === null || _a === void 0 ? void 0 : _a.subscribe(subscriber)) !== null && _b !== void 0 ? _b : Subscription_1.EMPTY_SUBSCRIPTION;
+        };
+        return AnonymousSubject4;
+      }(Subject3);
+      exports.AnonymousSubject = AnonymousSubject3;
     }
   });
 
@@ -40847,6 +40006,50 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/concat.js
+  var require_concat2 = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/concat.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.concat = void 0;
+      var concatAll_1 = require_concatAll();
+      var args_1 = require_args();
+      var from_1 = require_from();
+      function concat() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+        return concatAll_1.concatAll()(from_1.from(args, args_1.popScheduler(args)));
+      }
+      exports.concat = concat;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/empty.js
+  var require_empty = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/empty.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.empty = exports.EMPTY = void 0;
+      var Observable_1 = require_Observable();
+      exports.EMPTY = new Observable_1.Observable(function(subscriber) {
+        return subscriber.complete();
+      });
+      function empty(scheduler) {
+        return scheduler ? emptyScheduled(scheduler) : exports.EMPTY;
+      }
+      exports.empty = empty;
+      function emptyScheduled(scheduler) {
+        return new Observable_1.Observable(function(subscriber) {
+          return scheduler.schedule(function() {
+            return subscriber.complete();
+          });
+        });
+      }
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/take.js
   var require_take = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/take.js"(exports) {
@@ -40915,7 +40118,7 @@ ${parts.join("\n")}
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.delayWhen = void 0;
-      var concat_1 = require_concat();
+      var concat_1 = require_concat2();
       var take_1 = require_take();
       var ignoreElements_1 = require_ignoreElements();
       var mapTo_1 = require_mapTo();
@@ -40954,6 +40157,118 @@ ${parts.join("\n")}
         });
       }
       exports.delay = delay;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/of.js
+  var require_of = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/of.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.of = void 0;
+      var args_1 = require_args();
+      var from_1 = require_from();
+      function of2() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+        var scheduler = args_1.popScheduler(args);
+        return from_1.from(args, scheduler);
+      }
+      exports.of = of2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/throwError.js
+  var require_throwError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/throwError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.throwError = void 0;
+      var Observable_1 = require_Observable();
+      var isFunction_1 = require_isFunction();
+      function throwError(errorOrErrorFactory, scheduler) {
+        var errorFactory = isFunction_1.isFunction(errorOrErrorFactory) ? errorOrErrorFactory : function() {
+          return errorOrErrorFactory;
+        };
+        var init3 = function(subscriber) {
+          return subscriber.error(errorFactory());
+        };
+        return new Observable_1.Observable(scheduler ? function(subscriber) {
+          return scheduler.schedule(init3, 0, subscriber);
+        } : init3);
+      }
+      exports.throwError = throwError;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Notification.js
+  var require_Notification = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/Notification.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.observeNotification = exports.Notification = exports.NotificationKind = void 0;
+      var empty_1 = require_empty();
+      var of_1 = require_of();
+      var throwError_1 = require_throwError();
+      var isFunction_1 = require_isFunction();
+      var NotificationKind;
+      (function(NotificationKind2) {
+        NotificationKind2["NEXT"] = "N";
+        NotificationKind2["ERROR"] = "E";
+        NotificationKind2["COMPLETE"] = "C";
+      })(NotificationKind = exports.NotificationKind || (exports.NotificationKind = {}));
+      var Notification = function() {
+        function Notification2(kind, value, error) {
+          this.kind = kind;
+          this.value = value;
+          this.error = error;
+          this.hasValue = kind === "N";
+        }
+        Notification2.prototype.observe = function(observer) {
+          return observeNotification(this, observer);
+        };
+        Notification2.prototype.do = function(nextHandler, errorHandler, completeHandler) {
+          var _a = this, kind = _a.kind, value = _a.value, error = _a.error;
+          return kind === "N" ? nextHandler === null || nextHandler === void 0 ? void 0 : nextHandler(value) : kind === "E" ? errorHandler === null || errorHandler === void 0 ? void 0 : errorHandler(error) : completeHandler === null || completeHandler === void 0 ? void 0 : completeHandler();
+        };
+        Notification2.prototype.accept = function(nextOrObserver, error, complete) {
+          var _a;
+          return isFunction_1.isFunction((_a = nextOrObserver) === null || _a === void 0 ? void 0 : _a.next) ? this.observe(nextOrObserver) : this.do(nextOrObserver, error, complete);
+        };
+        Notification2.prototype.toObservable = function() {
+          var _a = this, kind = _a.kind, value = _a.value, error = _a.error;
+          var result = kind === "N" ? of_1.of(value) : kind === "E" ? throwError_1.throwError(function() {
+            return error;
+          }) : kind === "C" ? empty_1.EMPTY : 0;
+          if (!result) {
+            throw new TypeError("Unexpected notification kind " + kind);
+          }
+          return result;
+        };
+        Notification2.createNext = function(value) {
+          return new Notification2("N", value);
+        };
+        Notification2.createError = function(err) {
+          return new Notification2("E", void 0, err);
+        };
+        Notification2.createComplete = function() {
+          return Notification2.completeNotification;
+        };
+        Notification2.completeNotification = new Notification2("C");
+        return Notification2;
+      }();
+      exports.Notification = Notification;
+      function observeNotification(notification, observer) {
+        var _a, _b, _c;
+        var _d = notification, kind = _d.kind, value = _d.value, error = _d.error;
+        if (typeof kind !== "string") {
+          throw new TypeError('Invalid notification, missing "kind"');
+        }
+        kind === "N" ? (_a = observer.next) === null || _a === void 0 ? void 0 : _a.call(observer, value) : kind === "E" ? (_b = observer.error) === null || _b === void 0 ? void 0 : _b.call(observer, error) : (_c = observer.complete) === null || _c === void 0 ? void 0 : _c.call(observer);
+      }
+      exports.observeNotification = observeNotification;
     }
   });
 
@@ -41056,6 +40371,60 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ArgumentOutOfRangeError.js
+  var require_ArgumentOutOfRangeError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/ArgumentOutOfRangeError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.ArgumentOutOfRangeError = void 0;
+      var createErrorClass_1 = require_createErrorClass();
+      exports.ArgumentOutOfRangeError = createErrorClass_1.createErrorClass(function(_super) {
+        return function ArgumentOutOfRangeErrorImpl() {
+          _super(this);
+          this.name = "ArgumentOutOfRangeError";
+          this.message = "argument out of range";
+        };
+      });
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/filter.js
+  var require_filter = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/filter.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.filter = void 0;
+      var lift_1 = require_lift();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      function filter2(predicate, thisArg) {
+        return lift_1.operate(function(source2, subscriber) {
+          var index = 0;
+          source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            return predicate.call(thisArg, value, index++) && subscriber.next(value);
+          }));
+        });
+      }
+      exports.filter = filter2;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/EmptyError.js
+  var require_EmptyError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/EmptyError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.EmptyError = void 0;
+      var createErrorClass_1 = require_createErrorClass();
+      exports.EmptyError = createErrorClass_1.createErrorClass(function(_super) {
+        return function EmptyErrorImpl() {
+          _super(this);
+          this.name = "EmptyError";
+          this.message = "no elements in sequence";
+        };
+      });
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/throwIfEmpty.js
   var require_throwIfEmpty = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/throwIfEmpty.js"(exports) {
@@ -41146,7 +40515,7 @@ ${parts.join("\n")}
       };
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.endWith = void 0;
-      var concat_1 = require_concat();
+      var concat_1 = require_concat2();
       var of_1 = require_of();
       function endWith() {
         var values = [];
@@ -41604,6 +40973,59 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/merge.js
+  var require_merge = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/merge.js"(exports) {
+      "use strict";
+      var __read3 = exports && exports.__read || function(o2, n2) {
+        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
+        if (!m2)
+          return o2;
+        var i2 = m2.call(o2), r2, ar = [], e2;
+        try {
+          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
+            ar.push(r2.value);
+        } catch (error) {
+          e2 = { error };
+        } finally {
+          try {
+            if (r2 && !r2.done && (m2 = i2["return"]))
+              m2.call(i2);
+          } finally {
+            if (e2)
+              throw e2.error;
+          }
+        }
+        return ar;
+      };
+      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
+        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
+          to[j2] = from3[i2];
+        return to;
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.merge = void 0;
+      var lift_1 = require_lift();
+      var argsOrArgArray_1 = require_argsOrArgArray();
+      var mergeAll_1 = require_mergeAll();
+      var args_1 = require_args();
+      var from_1 = require_from();
+      function merge3() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+        var scheduler = args_1.popScheduler(args);
+        var concurrent = args_1.popNumber(args, Infinity);
+        args = argsOrArgArray_1.argsOrArgArray(args);
+        return lift_1.operate(function(source2, subscriber) {
+          mergeAll_1.mergeAll(concurrent)(from_1.from(__spreadArray3([source2], __read3(args)), scheduler)).subscribe(subscriber);
+        });
+      }
+      exports.merge = merge3;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/flatMap.js
   var require_flatMap = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/flatMap.js"(exports) {
@@ -41670,59 +41092,6 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/merge.js
-  var require_merge2 = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/merge.js"(exports) {
-      "use strict";
-      var __read3 = exports && exports.__read || function(o2, n2) {
-        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
-        if (!m2)
-          return o2;
-        var i2 = m2.call(o2), r2, ar = [], e2;
-        try {
-          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
-            ar.push(r2.value);
-        } catch (error) {
-          e2 = { error };
-        } finally {
-          try {
-            if (r2 && !r2.done && (m2 = i2["return"]))
-              m2.call(i2);
-          } finally {
-            if (e2)
-              throw e2.error;
-          }
-        }
-        return ar;
-      };
-      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
-        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
-          to[j2] = from3[i2];
-        return to;
-      };
-      Object.defineProperty(exports, "__esModule", { value: true });
-      exports.merge = void 0;
-      var lift_1 = require_lift();
-      var argsOrArgArray_1 = require_argsOrArgArray();
-      var mergeAll_1 = require_mergeAll();
-      var args_1 = require_args();
-      var from_1 = require_from();
-      function merge3() {
-        var args = [];
-        for (var _i = 0; _i < arguments.length; _i++) {
-          args[_i] = arguments[_i];
-        }
-        var scheduler = args_1.popScheduler(args);
-        var concurrent = args_1.popNumber(args, Infinity);
-        args = argsOrArgArray_1.argsOrArgArray(args);
-        return lift_1.operate(function(source2, subscriber) {
-          mergeAll_1.mergeAll(concurrent)(from_1.from(__spreadArray3([source2], __read3(args)), scheduler)).subscribe(subscriber);
-        });
-      }
-      exports.merge = merge3;
-    }
-  });
-
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeWith.js
   var require_mergeWith = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/mergeWith.js"(exports) {
@@ -41755,7 +41124,7 @@ ${parts.join("\n")}
       };
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.mergeWith = void 0;
-      var merge_1 = require_merge2();
+      var merge_1 = require_merge();
       function mergeWith() {
         var otherSources = [];
         for (var _i = 0; _i < arguments.length; _i++) {
@@ -41786,6 +41155,134 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/refCount.js
+  var require_refCount = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/refCount.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.refCount = void 0;
+      var lift_1 = require_lift();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      function refCount() {
+        return lift_1.operate(function(source2, subscriber) {
+          var connection = null;
+          source2._refCount++;
+          var refCounter = OperatorSubscriber_1.createOperatorSubscriber(subscriber, void 0, void 0, void 0, function() {
+            if (!source2 || source2._refCount <= 0 || 0 < --source2._refCount) {
+              connection = null;
+              return;
+            }
+            var sharedConnection = source2._connection;
+            var conn = connection;
+            connection = null;
+            if (sharedConnection && (!conn || sharedConnection === conn)) {
+              sharedConnection.unsubscribe();
+            }
+            subscriber.unsubscribe();
+          });
+          source2.subscribe(refCounter);
+          if (!refCounter.closed) {
+            connection = source2.connect();
+          }
+        });
+      }
+      exports.refCount = refCount;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/ConnectableObservable.js
+  var require_ConnectableObservable = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/ConnectableObservable.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.ConnectableObservable = void 0;
+      var Observable_1 = require_Observable();
+      var Subscription_1 = require_Subscription();
+      var refCount_1 = require_refCount();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var lift_1 = require_lift();
+      var ConnectableObservable = function(_super) {
+        __extends3(ConnectableObservable2, _super);
+        function ConnectableObservable2(source2, subjectFactory) {
+          var _this = _super.call(this) || this;
+          _this.source = source2;
+          _this.subjectFactory = subjectFactory;
+          _this._subject = null;
+          _this._refCount = 0;
+          _this._connection = null;
+          if (lift_1.hasLift(source2)) {
+            _this.lift = source2.lift;
+          }
+          return _this;
+        }
+        ConnectableObservable2.prototype._subscribe = function(subscriber) {
+          return this.getSubject().subscribe(subscriber);
+        };
+        ConnectableObservable2.prototype.getSubject = function() {
+          var subject = this._subject;
+          if (!subject || subject.isStopped) {
+            this._subject = this.subjectFactory();
+          }
+          return this._subject;
+        };
+        ConnectableObservable2.prototype._teardown = function() {
+          this._refCount = 0;
+          var _connection = this._connection;
+          this._subject = this._connection = null;
+          _connection === null || _connection === void 0 ? void 0 : _connection.unsubscribe();
+        };
+        ConnectableObservable2.prototype.connect = function() {
+          var _this = this;
+          var connection = this._connection;
+          if (!connection) {
+            connection = this._connection = new Subscription_1.Subscription();
+            var subject_1 = this.getSubject();
+            connection.add(this.source.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subject_1, void 0, function() {
+              _this._teardown();
+              subject_1.complete();
+            }, function(err) {
+              _this._teardown();
+              subject_1.error(err);
+            }, function() {
+              return _this._teardown();
+            })));
+            if (connection.closed) {
+              this._connection = null;
+              connection = Subscription_1.Subscription.EMPTY;
+            }
+          }
+          return connection;
+        };
+        ConnectableObservable2.prototype.refCount = function() {
+          return refCount_1.refCount()(this);
+        };
+        return ConnectableObservable2;
+      }(Observable_1.Observable);
+      exports.ConnectableObservable = ConnectableObservable;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/multicast.js
   var require_multicast = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/multicast.js"(exports) {
@@ -41809,6 +41306,48 @@ ${parts.join("\n")}
         };
       }
       exports.multicast = multicast;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/onErrorResumeNext.js
+  var require_onErrorResumeNext = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/onErrorResumeNext.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.onErrorResumeNext = void 0;
+      var Observable_1 = require_Observable();
+      var argsOrArgArray_1 = require_argsOrArgArray();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var noop_1 = require_noop();
+      var innerFrom_1 = require_innerFrom();
+      function onErrorResumeNext() {
+        var sources2 = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          sources2[_i] = arguments[_i];
+        }
+        var nextSources = argsOrArgArray_1.argsOrArgArray(sources2);
+        return new Observable_1.Observable(function(subscriber) {
+          var sourceIndex = 0;
+          var subscribeNext = function() {
+            if (sourceIndex < nextSources.length) {
+              var nextSource = void 0;
+              try {
+                nextSource = innerFrom_1.innerFrom(nextSources[sourceIndex++]);
+              } catch (err) {
+                subscribeNext();
+                return;
+              }
+              var innerSubscriber = new OperatorSubscriber_1.OperatorSubscriber(subscriber, void 0, noop_1.noop, noop_1.noop);
+              nextSource.subscribe(innerSubscriber);
+              innerSubscriber.add(subscribeNext);
+            } else {
+              subscriber.complete();
+            }
+          };
+          subscribeNext();
+        });
+      }
+      exports.onErrorResumeNext = onErrorResumeNext;
     }
   });
 
@@ -41885,6 +41424,38 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/not.js
+  var require_not = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/not.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.not = void 0;
+      function not(pred, thisArg) {
+        return function(value, index) {
+          return !pred.call(thisArg, value, index);
+        };
+      }
+      exports.not = not;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/partition.js
+  var require_partition = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/partition.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.partition = void 0;
+      var not_1 = require_not();
+      var filter_1 = require_filter();
+      function partition(predicate, thisArg) {
+        return function(source2) {
+          return [filter_1.filter(predicate, thisArg)(source2), filter_1.filter(not_1.not(predicate, thisArg))(source2)];
+        };
+      }
+      exports.partition = partition;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/pluck.js
   var require_pluck = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/pluck.js"(exports) {
@@ -41938,6 +41509,70 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/BehaviorSubject.js
+  var require_BehaviorSubject = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/BehaviorSubject.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.BehaviorSubject = void 0;
+      var Subject_1 = require_Subject();
+      var BehaviorSubject = function(_super) {
+        __extends3(BehaviorSubject2, _super);
+        function BehaviorSubject2(_value) {
+          var _this = _super.call(this) || this;
+          _this._value = _value;
+          return _this;
+        }
+        Object.defineProperty(BehaviorSubject2.prototype, "value", {
+          get: function() {
+            return this.getValue();
+          },
+          enumerable: false,
+          configurable: true
+        });
+        BehaviorSubject2.prototype._subscribe = function(subscriber) {
+          var subscription = _super.prototype._subscribe.call(this, subscriber);
+          !subscription.closed && subscriber.next(this._value);
+          return subscription;
+        };
+        BehaviorSubject2.prototype.getValue = function() {
+          var _a = this, hasError = _a.hasError, thrownError = _a.thrownError, _value = _a._value;
+          if (hasError) {
+            throw thrownError;
+          }
+          this._throwIfClosed();
+          return _value;
+        };
+        BehaviorSubject2.prototype.next = function(value) {
+          _super.prototype.next.call(this, this._value = value);
+        };
+        return BehaviorSubject2;
+      }(Subject_1.Subject);
+      exports.BehaviorSubject = BehaviorSubject;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/publishBehavior.js
   var require_publishBehavior = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/publishBehavior.js"(exports) {
@@ -41955,6 +41590,72 @@ ${parts.join("\n")}
         };
       }
       exports.publishBehavior = publishBehavior;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/AsyncSubject.js
+  var require_AsyncSubject = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/AsyncSubject.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.AsyncSubject = void 0;
+      var Subject_1 = require_Subject();
+      var AsyncSubject = function(_super) {
+        __extends3(AsyncSubject2, _super);
+        function AsyncSubject2() {
+          var _this = _super !== null && _super.apply(this, arguments) || this;
+          _this._value = null;
+          _this._hasValue = false;
+          _this._isComplete = false;
+          return _this;
+        }
+        AsyncSubject2.prototype._checkFinalizedStatuses = function(subscriber) {
+          var _a = this, hasError = _a.hasError, _hasValue = _a._hasValue, _value = _a._value, thrownError = _a.thrownError, isStopped = _a.isStopped, _isComplete = _a._isComplete;
+          if (hasError) {
+            subscriber.error(thrownError);
+          } else if (isStopped || _isComplete) {
+            _hasValue && subscriber.next(_value);
+            subscriber.complete();
+          }
+        };
+        AsyncSubject2.prototype.next = function(value) {
+          if (!this.isStopped) {
+            this._value = value;
+            this._hasValue = true;
+          }
+        };
+        AsyncSubject2.prototype.complete = function() {
+          var _a = this, _hasValue = _a._hasValue, _value = _a._value, _isComplete = _a._isComplete;
+          if (!_isComplete) {
+            this._isComplete = true;
+            _hasValue && _super.prototype.next.call(this, _value);
+            _super.prototype.complete.call(this);
+          }
+        };
+        return AsyncSubject2;
+      }(Subject_1.Subject);
+      exports.AsyncSubject = AsyncSubject;
     }
   });
 
@@ -41978,6 +41679,98 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/ReplaySubject.js
+  var require_ReplaySubject = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/ReplaySubject.js"(exports) {
+      "use strict";
+      var __extends3 = exports && exports.__extends || function() {
+        var extendStatics3 = function(d2, b2) {
+          extendStatics3 = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d3, b3) {
+            d3.__proto__ = b3;
+          } || function(d3, b3) {
+            for (var p2 in b3)
+              if (Object.prototype.hasOwnProperty.call(b3, p2))
+                d3[p2] = b3[p2];
+          };
+          return extendStatics3(d2, b2);
+        };
+        return function(d2, b2) {
+          if (typeof b2 !== "function" && b2 !== null)
+            throw new TypeError("Class extends value " + String(b2) + " is not a constructor or null");
+          extendStatics3(d2, b2);
+          function __() {
+            this.constructor = d2;
+          }
+          d2.prototype = b2 === null ? Object.create(b2) : (__.prototype = b2.prototype, new __());
+        };
+      }();
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.ReplaySubject = void 0;
+      var Subject_1 = require_Subject();
+      var dateTimestampProvider_1 = require_dateTimestampProvider();
+      var ReplaySubject = function(_super) {
+        __extends3(ReplaySubject2, _super);
+        function ReplaySubject2(_bufferSize, _windowTime, _timestampProvider) {
+          if (_bufferSize === void 0) {
+            _bufferSize = Infinity;
+          }
+          if (_windowTime === void 0) {
+            _windowTime = Infinity;
+          }
+          if (_timestampProvider === void 0) {
+            _timestampProvider = dateTimestampProvider_1.dateTimestampProvider;
+          }
+          var _this = _super.call(this) || this;
+          _this._bufferSize = _bufferSize;
+          _this._windowTime = _windowTime;
+          _this._timestampProvider = _timestampProvider;
+          _this._buffer = [];
+          _this._infiniteTimeWindow = true;
+          _this._infiniteTimeWindow = _windowTime === Infinity;
+          _this._bufferSize = Math.max(1, _bufferSize);
+          _this._windowTime = Math.max(1, _windowTime);
+          return _this;
+        }
+        ReplaySubject2.prototype.next = function(value) {
+          var _a = this, isStopped = _a.isStopped, _buffer = _a._buffer, _infiniteTimeWindow = _a._infiniteTimeWindow, _timestampProvider = _a._timestampProvider, _windowTime = _a._windowTime;
+          if (!isStopped) {
+            _buffer.push(value);
+            !_infiniteTimeWindow && _buffer.push(_timestampProvider.now() + _windowTime);
+          }
+          this._trimBuffer();
+          _super.prototype.next.call(this, value);
+        };
+        ReplaySubject2.prototype._subscribe = function(subscriber) {
+          this._throwIfClosed();
+          this._trimBuffer();
+          var subscription = this._innerSubscribe(subscriber);
+          var _a = this, _infiniteTimeWindow = _a._infiniteTimeWindow, _buffer = _a._buffer;
+          var copy = _buffer.slice();
+          for (var i2 = 0; i2 < copy.length && !subscriber.closed; i2 += _infiniteTimeWindow ? 1 : 2) {
+            subscriber.next(copy[i2]);
+          }
+          this._checkFinalizedStatuses(subscriber);
+          return subscription;
+        };
+        ReplaySubject2.prototype._trimBuffer = function() {
+          var _a = this, _bufferSize = _a._bufferSize, _timestampProvider = _a._timestampProvider, _buffer = _a._buffer, _infiniteTimeWindow = _a._infiniteTimeWindow;
+          var adjustedBufferSize = (_infiniteTimeWindow ? 1 : 2) * _bufferSize;
+          _bufferSize < Infinity && adjustedBufferSize < _buffer.length && _buffer.splice(0, _buffer.length - adjustedBufferSize);
+          if (!_infiniteTimeWindow) {
+            var now2 = _timestampProvider.now();
+            var last3 = 0;
+            for (var i2 = 1; i2 < _buffer.length && _buffer[i2] <= now2; i2 += 2) {
+              last3 = i2;
+            }
+            last3 && _buffer.splice(0, last3 + 1);
+          }
+        };
+        return ReplaySubject2;
+      }(Subject_1.Subject);
+      exports.ReplaySubject = ReplaySubject;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/publishReplay.js
   var require_publishReplay = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/publishReplay.js"(exports) {
@@ -41997,6 +41790,48 @@ ${parts.join("\n")}
         };
       }
       exports.publishReplay = publishReplay;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/race.js
+  var require_race = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/race.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.raceInit = exports.race = void 0;
+      var Observable_1 = require_Observable();
+      var innerFrom_1 = require_innerFrom();
+      var argsOrArgArray_1 = require_argsOrArgArray();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      function race() {
+        var sources2 = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          sources2[_i] = arguments[_i];
+        }
+        sources2 = argsOrArgArray_1.argsOrArgArray(sources2);
+        return sources2.length === 1 ? innerFrom_1.innerFrom(sources2[0]) : new Observable_1.Observable(raceInit(sources2));
+      }
+      exports.race = race;
+      function raceInit(sources2) {
+        return function(subscriber) {
+          var subscriptions = [];
+          var _loop_1 = function(i3) {
+            subscriptions.push(innerFrom_1.innerFrom(sources2[i3]).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+              if (subscriptions) {
+                for (var s2 = 0; s2 < subscriptions.length; s2++) {
+                  s2 !== i3 && subscriptions[s2].unsubscribe();
+                }
+                subscriptions = null;
+              }
+              subscriber.next(value);
+            })));
+          };
+          for (var i2 = 0; subscriptions && !subscriber.closed && i2 < sources2.length; i2++) {
+            _loop_1(i2);
+          }
+        };
+      }
+      exports.raceInit = raceInit;
     }
   });
 
@@ -42045,6 +41880,51 @@ ${parts.join("\n")}
         });
       }
       exports.raceWith = raceWith;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/race.js
+  var require_race2 = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/race.js"(exports) {
+      "use strict";
+      var __read3 = exports && exports.__read || function(o2, n2) {
+        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
+        if (!m2)
+          return o2;
+        var i2 = m2.call(o2), r2, ar = [], e2;
+        try {
+          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
+            ar.push(r2.value);
+        } catch (error) {
+          e2 = { error };
+        } finally {
+          try {
+            if (r2 && !r2.done && (m2 = i2["return"]))
+              m2.call(i2);
+          } finally {
+            if (e2)
+              throw e2.error;
+          }
+        }
+        return ar;
+      };
+      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
+        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
+          to[j2] = from3[i2];
+        return to;
+      };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.race = void 0;
+      var argsOrArgArray_1 = require_argsOrArgArray();
+      var raceWith_1 = require_raceWith();
+      function race() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+        return raceWith_1.raceWith.apply(void 0, __spreadArray3([], __read3(argsOrArgArray_1.argsOrArgArray(args))));
+      }
+      exports.race = race;
     }
   });
 
@@ -42316,6 +42196,30 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/interval.js
+  var require_interval = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/interval.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.interval = void 0;
+      var async_1 = require_async();
+      var timer_1 = require_timer();
+      function interval2(period, scheduler) {
+        if (period === void 0) {
+          period = 0;
+        }
+        if (scheduler === void 0) {
+          scheduler = async_1.asyncScheduler;
+        }
+        if (period < 0) {
+          period = 0;
+        }
+        return timer_1.timer(period, period, scheduler);
+      }
+      exports.interval = interval2;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/sampleTime.js
   var require_sampleTime = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/sampleTime.js"(exports) {
@@ -42556,6 +42460,40 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/SequenceError.js
+  var require_SequenceError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/SequenceError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.SequenceError = void 0;
+      var createErrorClass_1 = require_createErrorClass();
+      exports.SequenceError = createErrorClass_1.createErrorClass(function(_super) {
+        return function SequenceErrorImpl(message) {
+          _super(this);
+          this.name = "SequenceError";
+          this.message = message;
+        };
+      });
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/NotFoundError.js
+  var require_NotFoundError = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/util/NotFoundError.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.NotFoundError = void 0;
+      var createErrorClass_1 = require_createErrorClass();
+      exports.NotFoundError = createErrorClass_1.createErrorClass(function(_super) {
+        return function NotFoundErrorImpl(message) {
+          _super(this);
+          this.name = "NotFoundError";
+          this.message = message;
+        };
+      });
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/single.js
   var require_single = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/single.js"(exports) {
@@ -42697,7 +42635,7 @@ ${parts.join("\n")}
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.startWith = void 0;
-      var concat_1 = require_concat();
+      var concat_1 = require_concat2();
       var args_1 = require_args();
       var lift_1 = require_lift();
       function startWith() {
@@ -43008,6 +42946,75 @@ ${parts.join("\n")}
         return TimeInterval2;
       }();
       exports.TimeInterval = TimeInterval;
+    }
+  });
+
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/timeout.js
+  var require_timeout = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/timeout.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.timeout = exports.TimeoutError = void 0;
+      var async_1 = require_async();
+      var isDate_1 = require_isDate();
+      var lift_1 = require_lift();
+      var innerFrom_1 = require_innerFrom();
+      var createErrorClass_1 = require_createErrorClass();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var executeSchedule_1 = require_executeSchedule();
+      exports.TimeoutError = createErrorClass_1.createErrorClass(function(_super) {
+        return function TimeoutErrorImpl(info) {
+          if (info === void 0) {
+            info = null;
+          }
+          _super(this);
+          this.message = "Timeout has occurred";
+          this.name = "TimeoutError";
+          this.info = info;
+        };
+      });
+      function timeout(config4, schedulerArg) {
+        var _a = isDate_1.isValidDate(config4) ? { first: config4 } : typeof config4 === "number" ? { each: config4 } : config4, first2 = _a.first, each = _a.each, _b = _a.with, _with = _b === void 0 ? timeoutErrorFactory : _b, _c = _a.scheduler, scheduler = _c === void 0 ? schedulerArg !== null && schedulerArg !== void 0 ? schedulerArg : async_1.asyncScheduler : _c, _d = _a.meta, meta = _d === void 0 ? null : _d;
+        if (first2 == null && each == null) {
+          throw new TypeError("No timeout provided.");
+        }
+        return lift_1.operate(function(source2, subscriber) {
+          var originalSourceSubscription;
+          var timerSubscription;
+          var lastValue = null;
+          var seen = 0;
+          var startTimer = function(delay) {
+            timerSubscription = executeSchedule_1.executeSchedule(subscriber, scheduler, function() {
+              try {
+                originalSourceSubscription.unsubscribe();
+                innerFrom_1.innerFrom(_with({
+                  meta,
+                  lastValue,
+                  seen
+                })).subscribe(subscriber);
+              } catch (err) {
+                subscriber.error(err);
+              }
+            }, delay);
+          };
+          originalSourceSubscription = source2.subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+            timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.unsubscribe();
+            seen++;
+            subscriber.next(lastValue = value);
+            each > 0 && startTimer(each);
+          }, void 0, void 0, function() {
+            if (!(timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.closed)) {
+              timerSubscription === null || timerSubscription === void 0 ? void 0 : timerSubscription.unsubscribe();
+            }
+            lastValue = null;
+          }));
+          !seen && startTimer(first2 != null ? typeof first2 === "number" ? first2 : +first2 - scheduler.now() : each);
+        });
+      }
+      exports.timeout = timeout;
+      function timeoutErrorFactory(info) {
+        throw new exports.TimeoutError(info);
+      }
     }
   });
 
@@ -43493,18 +43500,91 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipAll.js
-  var require_zipAll = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipAll.js"(exports) {
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/zip.js
+  var require_zip = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/observable/zip.js"(exports) {
       "use strict";
+      var __read3 = exports && exports.__read || function(o2, n2) {
+        var m2 = typeof Symbol === "function" && o2[Symbol.iterator];
+        if (!m2)
+          return o2;
+        var i2 = m2.call(o2), r2, ar = [], e2;
+        try {
+          while ((n2 === void 0 || n2-- > 0) && !(r2 = i2.next()).done)
+            ar.push(r2.value);
+        } catch (error) {
+          e2 = { error };
+        } finally {
+          try {
+            if (r2 && !r2.done && (m2 = i2["return"]))
+              m2.call(i2);
+          } finally {
+            if (e2)
+              throw e2.error;
+          }
+        }
+        return ar;
+      };
+      var __spreadArray3 = exports && exports.__spreadArray || function(to, from3) {
+        for (var i2 = 0, il = from3.length, j2 = to.length; i2 < il; i2++, j2++)
+          to[j2] = from3[i2];
+        return to;
+      };
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.zipAll = void 0;
-      var zip_1 = require_zip();
-      var joinAllInternals_1 = require_joinAllInternals();
-      function zipAll(project) {
-        return joinAllInternals_1.joinAllInternals(zip_1.zip, project);
+      exports.zip = void 0;
+      var Observable_1 = require_Observable();
+      var innerFrom_1 = require_innerFrom();
+      var argsOrArgArray_1 = require_argsOrArgArray();
+      var empty_1 = require_empty();
+      var OperatorSubscriber_1 = require_OperatorSubscriber();
+      var args_1 = require_args();
+      function zip() {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+          args[_i] = arguments[_i];
+        }
+        var resultSelector = args_1.popResultSelector(args);
+        var sources2 = argsOrArgArray_1.argsOrArgArray(args);
+        return sources2.length ? new Observable_1.Observable(function(subscriber) {
+          var buffers = sources2.map(function() {
+            return [];
+          });
+          var completed = sources2.map(function() {
+            return false;
+          });
+          subscriber.add(function() {
+            buffers = completed = null;
+          });
+          var _loop_1 = function(sourceIndex2) {
+            innerFrom_1.innerFrom(sources2[sourceIndex2]).subscribe(OperatorSubscriber_1.createOperatorSubscriber(subscriber, function(value) {
+              buffers[sourceIndex2].push(value);
+              if (buffers.every(function(buffer) {
+                return buffer.length;
+              })) {
+                var result = buffers.map(function(buffer) {
+                  return buffer.shift();
+                });
+                subscriber.next(resultSelector ? resultSelector.apply(void 0, __spreadArray3([], __read3(result))) : result);
+                if (buffers.some(function(buffer, i2) {
+                  return !buffer.length && completed[i2];
+                })) {
+                  subscriber.complete();
+                }
+              }
+            }, function() {
+              completed[sourceIndex2] = true;
+              !buffers[sourceIndex2].length && subscriber.complete();
+            }));
+          };
+          for (var sourceIndex = 0; !subscriber.closed && sourceIndex < sources2.length; sourceIndex++) {
+            _loop_1(sourceIndex);
+          }
+          return function() {
+            buffers = completed = null;
+          };
+        }) : empty_1.EMPTY;
       }
-      exports.zipAll = zipAll;
+      exports.zip = zip;
     }
   });
 
@@ -43555,6 +43635,21 @@ ${parts.join("\n")}
     }
   });
 
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipAll.js
+  var require_zipAll = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipAll.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.zipAll = void 0;
+      var zip_1 = require_zip();
+      var joinAllInternals_1 = require_joinAllInternals();
+      function zipAll(project) {
+        return joinAllInternals_1.joinAllInternals(zip_1.zip, project);
+      }
+      exports.zipAll = zipAll;
+    }
+  });
+
   // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipWith.js
   var require_zipWith = __commonJS({
     "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/internal/operators/zipWith.js"(exports) {
@@ -43599,290 +43694,14 @@ ${parts.join("\n")}
     }
   });
 
-  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/index.js
-  var require_cjs = __commonJS({
-    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/index.js"(exports) {
+  // ../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/operators/index.js
+  var require_operators = __commonJS({
+    "../core/node_modules/blockwise/node_modules/rxjs/dist/cjs/operators/index.js"(exports) {
       "use strict";
-      var __createBinding = exports && exports.__createBinding || (Object.create ? function(o2, m2, k2, k22) {
-        if (k22 === void 0)
-          k22 = k2;
-        Object.defineProperty(o2, k22, { enumerable: true, get: function() {
-          return m2[k2];
-        } });
-      } : function(o2, m2, k2, k22) {
-        if (k22 === void 0)
-          k22 = k2;
-        o2[k22] = m2[k2];
-      });
-      var __exportStar = exports && exports.__exportStar || function(m2, exports2) {
-        for (var p2 in m2)
-          if (p2 !== "default" && !Object.prototype.hasOwnProperty.call(exports2, p2))
-            __createBinding(exports2, m2, p2);
-      };
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.interval = exports.iif = exports.generate = exports.fromEventPattern = exports.fromEvent = exports.from = exports.forkJoin = exports.empty = exports.defer = exports.connectable = exports.concat = exports.combineLatest = exports.bindNodeCallback = exports.bindCallback = exports.UnsubscriptionError = exports.TimeoutError = exports.SequenceError = exports.ObjectUnsubscribedError = exports.NotFoundError = exports.EmptyError = exports.ArgumentOutOfRangeError = exports.firstValueFrom = exports.lastValueFrom = exports.isObservable = exports.identity = exports.noop = exports.pipe = exports.NotificationKind = exports.Notification = exports.Subscriber = exports.Subscription = exports.Scheduler = exports.VirtualAction = exports.VirtualTimeScheduler = exports.animationFrameScheduler = exports.animationFrame = exports.queueScheduler = exports.queue = exports.asyncScheduler = exports.async = exports.asapScheduler = exports.asap = exports.AsyncSubject = exports.ReplaySubject = exports.BehaviorSubject = exports.Subject = exports.animationFrames = exports.observable = exports.ConnectableObservable = exports.Observable = void 0;
-      exports.filter = exports.expand = exports.exhaustMap = exports.exhaustAll = exports.exhaust = exports.every = exports.endWith = exports.elementAt = exports.distinctUntilKeyChanged = exports.distinctUntilChanged = exports.distinct = exports.dematerialize = exports.delayWhen = exports.delay = exports.defaultIfEmpty = exports.debounceTime = exports.debounce = exports.count = exports.connect = exports.concatWith = exports.concatMapTo = exports.concatMap = exports.concatAll = exports.combineLatestWith = exports.combineLatestAll = exports.combineAll = exports.catchError = exports.bufferWhen = exports.bufferToggle = exports.bufferTime = exports.bufferCount = exports.buffer = exports.auditTime = exports.audit = exports.config = exports.NEVER = exports.EMPTY = exports.scheduled = exports.zip = exports.using = exports.timer = exports.throwError = exports.range = exports.race = exports.partition = exports.pairs = exports.onErrorResumeNext = exports.of = exports.never = exports.merge = void 0;
-      exports.switchMap = exports.switchAll = exports.subscribeOn = exports.startWith = exports.skipWhile = exports.skipUntil = exports.skipLast = exports.skip = exports.single = exports.shareReplay = exports.share = exports.sequenceEqual = exports.scan = exports.sampleTime = exports.sample = exports.refCount = exports.retryWhen = exports.retry = exports.repeatWhen = exports.repeat = exports.reduce = exports.raceWith = exports.publishReplay = exports.publishLast = exports.publishBehavior = exports.publish = exports.pluck = exports.pairwise = exports.onErrorResumeNextWith = exports.observeOn = exports.multicast = exports.min = exports.mergeWith = exports.mergeScan = exports.mergeMapTo = exports.mergeMap = exports.flatMap = exports.mergeAll = exports.max = exports.materialize = exports.mapTo = exports.map = exports.last = exports.isEmpty = exports.ignoreElements = exports.groupBy = exports.first = exports.findIndex = exports.find = exports.finalize = void 0;
-      exports.zipWith = exports.zipAll = exports.withLatestFrom = exports.windowWhen = exports.windowToggle = exports.windowTime = exports.windowCount = exports.window = exports.toArray = exports.timestamp = exports.timeoutWith = exports.timeout = exports.timeInterval = exports.throwIfEmpty = exports.throttleTime = exports.throttle = exports.tap = exports.takeWhile = exports.takeUntil = exports.takeLast = exports.take = exports.switchScan = exports.switchMapTo = void 0;
-      var Observable_1 = require_Observable();
-      Object.defineProperty(exports, "Observable", { enumerable: true, get: function() {
-        return Observable_1.Observable;
-      } });
-      var ConnectableObservable_1 = require_ConnectableObservable();
-      Object.defineProperty(exports, "ConnectableObservable", { enumerable: true, get: function() {
-        return ConnectableObservable_1.ConnectableObservable;
-      } });
-      var observable_1 = require_observable();
-      Object.defineProperty(exports, "observable", { enumerable: true, get: function() {
-        return observable_1.observable;
-      } });
-      var animationFrames_1 = require_animationFrames();
-      Object.defineProperty(exports, "animationFrames", { enumerable: true, get: function() {
-        return animationFrames_1.animationFrames;
-      } });
-      var Subject_1 = require_Subject();
-      Object.defineProperty(exports, "Subject", { enumerable: true, get: function() {
-        return Subject_1.Subject;
-      } });
-      var BehaviorSubject_1 = require_BehaviorSubject();
-      Object.defineProperty(exports, "BehaviorSubject", { enumerable: true, get: function() {
-        return BehaviorSubject_1.BehaviorSubject;
-      } });
-      var ReplaySubject_1 = require_ReplaySubject();
-      Object.defineProperty(exports, "ReplaySubject", { enumerable: true, get: function() {
-        return ReplaySubject_1.ReplaySubject;
-      } });
-      var AsyncSubject_1 = require_AsyncSubject();
-      Object.defineProperty(exports, "AsyncSubject", { enumerable: true, get: function() {
-        return AsyncSubject_1.AsyncSubject;
-      } });
-      var asap_1 = require_asap();
-      Object.defineProperty(exports, "asap", { enumerable: true, get: function() {
-        return asap_1.asap;
-      } });
-      Object.defineProperty(exports, "asapScheduler", { enumerable: true, get: function() {
-        return asap_1.asapScheduler;
-      } });
-      var async_1 = require_async();
-      Object.defineProperty(exports, "async", { enumerable: true, get: function() {
-        return async_1.async;
-      } });
-      Object.defineProperty(exports, "asyncScheduler", { enumerable: true, get: function() {
-        return async_1.asyncScheduler;
-      } });
-      var queue_1 = require_queue();
-      Object.defineProperty(exports, "queue", { enumerable: true, get: function() {
-        return queue_1.queue;
-      } });
-      Object.defineProperty(exports, "queueScheduler", { enumerable: true, get: function() {
-        return queue_1.queueScheduler;
-      } });
-      var animationFrame_1 = require_animationFrame();
-      Object.defineProperty(exports, "animationFrame", { enumerable: true, get: function() {
-        return animationFrame_1.animationFrame;
-      } });
-      Object.defineProperty(exports, "animationFrameScheduler", { enumerable: true, get: function() {
-        return animationFrame_1.animationFrameScheduler;
-      } });
-      var VirtualTimeScheduler_1 = require_VirtualTimeScheduler();
-      Object.defineProperty(exports, "VirtualTimeScheduler", { enumerable: true, get: function() {
-        return VirtualTimeScheduler_1.VirtualTimeScheduler;
-      } });
-      Object.defineProperty(exports, "VirtualAction", { enumerable: true, get: function() {
-        return VirtualTimeScheduler_1.VirtualAction;
-      } });
-      var Scheduler_1 = require_Scheduler();
-      Object.defineProperty(exports, "Scheduler", { enumerable: true, get: function() {
-        return Scheduler_1.Scheduler;
-      } });
-      var Subscription_1 = require_Subscription();
-      Object.defineProperty(exports, "Subscription", { enumerable: true, get: function() {
-        return Subscription_1.Subscription;
-      } });
-      var Subscriber_1 = require_Subscriber();
-      Object.defineProperty(exports, "Subscriber", { enumerable: true, get: function() {
-        return Subscriber_1.Subscriber;
-      } });
-      var Notification_1 = require_Notification();
-      Object.defineProperty(exports, "Notification", { enumerable: true, get: function() {
-        return Notification_1.Notification;
-      } });
-      Object.defineProperty(exports, "NotificationKind", { enumerable: true, get: function() {
-        return Notification_1.NotificationKind;
-      } });
-      var pipe_1 = require_pipe();
-      Object.defineProperty(exports, "pipe", { enumerable: true, get: function() {
-        return pipe_1.pipe;
-      } });
-      var noop_1 = require_noop();
-      Object.defineProperty(exports, "noop", { enumerable: true, get: function() {
-        return noop_1.noop;
-      } });
-      var identity_1 = require_identity();
-      Object.defineProperty(exports, "identity", { enumerable: true, get: function() {
-        return identity_1.identity;
-      } });
-      var isObservable_1 = require_isObservable();
-      Object.defineProperty(exports, "isObservable", { enumerable: true, get: function() {
-        return isObservable_1.isObservable;
-      } });
-      var lastValueFrom_1 = require_lastValueFrom();
-      Object.defineProperty(exports, "lastValueFrom", { enumerable: true, get: function() {
-        return lastValueFrom_1.lastValueFrom;
-      } });
-      var firstValueFrom_1 = require_firstValueFrom();
-      Object.defineProperty(exports, "firstValueFrom", { enumerable: true, get: function() {
-        return firstValueFrom_1.firstValueFrom;
-      } });
-      var ArgumentOutOfRangeError_1 = require_ArgumentOutOfRangeError();
-      Object.defineProperty(exports, "ArgumentOutOfRangeError", { enumerable: true, get: function() {
-        return ArgumentOutOfRangeError_1.ArgumentOutOfRangeError;
-      } });
-      var EmptyError_1 = require_EmptyError();
-      Object.defineProperty(exports, "EmptyError", { enumerable: true, get: function() {
-        return EmptyError_1.EmptyError;
-      } });
-      var NotFoundError_1 = require_NotFoundError();
-      Object.defineProperty(exports, "NotFoundError", { enumerable: true, get: function() {
-        return NotFoundError_1.NotFoundError;
-      } });
-      var ObjectUnsubscribedError_1 = require_ObjectUnsubscribedError();
-      Object.defineProperty(exports, "ObjectUnsubscribedError", { enumerable: true, get: function() {
-        return ObjectUnsubscribedError_1.ObjectUnsubscribedError;
-      } });
-      var SequenceError_1 = require_SequenceError();
-      Object.defineProperty(exports, "SequenceError", { enumerable: true, get: function() {
-        return SequenceError_1.SequenceError;
-      } });
-      var timeout_1 = require_timeout();
-      Object.defineProperty(exports, "TimeoutError", { enumerable: true, get: function() {
-        return timeout_1.TimeoutError;
-      } });
-      var UnsubscriptionError_1 = require_UnsubscriptionError();
-      Object.defineProperty(exports, "UnsubscriptionError", { enumerable: true, get: function() {
-        return UnsubscriptionError_1.UnsubscriptionError;
-      } });
-      var bindCallback_1 = require_bindCallback();
-      Object.defineProperty(exports, "bindCallback", { enumerable: true, get: function() {
-        return bindCallback_1.bindCallback;
-      } });
-      var bindNodeCallback_1 = require_bindNodeCallback();
-      Object.defineProperty(exports, "bindNodeCallback", { enumerable: true, get: function() {
-        return bindNodeCallback_1.bindNodeCallback;
-      } });
-      var combineLatest_1 = require_combineLatest();
-      Object.defineProperty(exports, "combineLatest", { enumerable: true, get: function() {
-        return combineLatest_1.combineLatest;
-      } });
-      var concat_1 = require_concat();
-      Object.defineProperty(exports, "concat", { enumerable: true, get: function() {
-        return concat_1.concat;
-      } });
-      var connectable_1 = require_connectable();
-      Object.defineProperty(exports, "connectable", { enumerable: true, get: function() {
-        return connectable_1.connectable;
-      } });
-      var defer_1 = require_defer();
-      Object.defineProperty(exports, "defer", { enumerable: true, get: function() {
-        return defer_1.defer;
-      } });
-      var empty_1 = require_empty();
-      Object.defineProperty(exports, "empty", { enumerable: true, get: function() {
-        return empty_1.empty;
-      } });
-      var forkJoin_1 = require_forkJoin();
-      Object.defineProperty(exports, "forkJoin", { enumerable: true, get: function() {
-        return forkJoin_1.forkJoin;
-      } });
-      var from_1 = require_from();
-      Object.defineProperty(exports, "from", { enumerable: true, get: function() {
-        return from_1.from;
-      } });
-      var fromEvent_1 = require_fromEvent();
-      Object.defineProperty(exports, "fromEvent", { enumerable: true, get: function() {
-        return fromEvent_1.fromEvent;
-      } });
-      var fromEventPattern_1 = require_fromEventPattern();
-      Object.defineProperty(exports, "fromEventPattern", { enumerable: true, get: function() {
-        return fromEventPattern_1.fromEventPattern;
-      } });
-      var generate_1 = require_generate();
-      Object.defineProperty(exports, "generate", { enumerable: true, get: function() {
-        return generate_1.generate;
-      } });
-      var iif_1 = require_iif();
-      Object.defineProperty(exports, "iif", { enumerable: true, get: function() {
-        return iif_1.iif;
-      } });
-      var interval_1 = require_interval();
-      Object.defineProperty(exports, "interval", { enumerable: true, get: function() {
-        return interval_1.interval;
-      } });
-      var merge_1 = require_merge();
-      Object.defineProperty(exports, "merge", { enumerable: true, get: function() {
-        return merge_1.merge;
-      } });
-      var never_1 = require_never();
-      Object.defineProperty(exports, "never", { enumerable: true, get: function() {
-        return never_1.never;
-      } });
-      var of_1 = require_of();
-      Object.defineProperty(exports, "of", { enumerable: true, get: function() {
-        return of_1.of;
-      } });
-      var onErrorResumeNext_1 = require_onErrorResumeNext();
-      Object.defineProperty(exports, "onErrorResumeNext", { enumerable: true, get: function() {
-        return onErrorResumeNext_1.onErrorResumeNext;
-      } });
-      var pairs_1 = require_pairs();
-      Object.defineProperty(exports, "pairs", { enumerable: true, get: function() {
-        return pairs_1.pairs;
-      } });
-      var partition_1 = require_partition();
-      Object.defineProperty(exports, "partition", { enumerable: true, get: function() {
-        return partition_1.partition;
-      } });
-      var race_1 = require_race();
-      Object.defineProperty(exports, "race", { enumerable: true, get: function() {
-        return race_1.race;
-      } });
-      var range_1 = require_range();
-      Object.defineProperty(exports, "range", { enumerable: true, get: function() {
-        return range_1.range;
-      } });
-      var throwError_1 = require_throwError();
-      Object.defineProperty(exports, "throwError", { enumerable: true, get: function() {
-        return throwError_1.throwError;
-      } });
-      var timer_1 = require_timer();
-      Object.defineProperty(exports, "timer", { enumerable: true, get: function() {
-        return timer_1.timer;
-      } });
-      var using_1 = require_using();
-      Object.defineProperty(exports, "using", { enumerable: true, get: function() {
-        return using_1.using;
-      } });
-      var zip_1 = require_zip();
-      Object.defineProperty(exports, "zip", { enumerable: true, get: function() {
-        return zip_1.zip;
-      } });
-      var scheduled_1 = require_scheduled();
-      Object.defineProperty(exports, "scheduled", { enumerable: true, get: function() {
-        return scheduled_1.scheduled;
-      } });
-      var empty_2 = require_empty();
-      Object.defineProperty(exports, "EMPTY", { enumerable: true, get: function() {
-        return empty_2.EMPTY;
-      } });
-      var never_2 = require_never();
-      Object.defineProperty(exports, "NEVER", { enumerable: true, get: function() {
-        return never_2.NEVER;
-      } });
-      __exportStar(require_types(), exports);
-      var config_1 = require_config();
-      Object.defineProperty(exports, "config", { enumerable: true, get: function() {
-        return config_1.config;
-      } });
+      exports.mergeAll = exports.merge = exports.max = exports.materialize = exports.mapTo = exports.map = exports.last = exports.isEmpty = exports.ignoreElements = exports.groupBy = exports.first = exports.findIndex = exports.find = exports.finalize = exports.filter = exports.expand = exports.exhaustMap = exports.exhaustAll = exports.exhaust = exports.every = exports.endWith = exports.elementAt = exports.distinctUntilKeyChanged = exports.distinctUntilChanged = exports.distinct = exports.dematerialize = exports.delayWhen = exports.delay = exports.defaultIfEmpty = exports.debounceTime = exports.debounce = exports.count = exports.connect = exports.concatWith = exports.concatMapTo = exports.concatMap = exports.concatAll = exports.concat = exports.combineLatestWith = exports.combineLatest = exports.combineLatestAll = exports.combineAll = exports.catchError = exports.bufferWhen = exports.bufferToggle = exports.bufferTime = exports.bufferCount = exports.buffer = exports.auditTime = exports.audit = void 0;
+      exports.timeInterval = exports.throwIfEmpty = exports.throttleTime = exports.throttle = exports.tap = exports.takeWhile = exports.takeUntil = exports.takeLast = exports.take = exports.switchScan = exports.switchMapTo = exports.switchMap = exports.switchAll = exports.subscribeOn = exports.startWith = exports.skipWhile = exports.skipUntil = exports.skipLast = exports.skip = exports.single = exports.shareReplay = exports.share = exports.sequenceEqual = exports.scan = exports.sampleTime = exports.sample = exports.refCount = exports.retryWhen = exports.retry = exports.repeatWhen = exports.repeat = exports.reduce = exports.raceWith = exports.race = exports.publishReplay = exports.publishLast = exports.publishBehavior = exports.publish = exports.pluck = exports.partition = exports.pairwise = exports.onErrorResumeNext = exports.observeOn = exports.multicast = exports.min = exports.mergeWith = exports.mergeScan = exports.mergeMapTo = exports.mergeMap = exports.flatMap = void 0;
+      exports.zipWith = exports.zipAll = exports.zip = exports.withLatestFrom = exports.windowWhen = exports.windowToggle = exports.windowTime = exports.windowCount = exports.window = exports.toArray = exports.timestamp = exports.timeoutWith = exports.timeout = void 0;
       var audit_1 = require_audit();
       Object.defineProperty(exports, "audit", { enumerable: true, get: function() {
         return audit_1.audit;
@@ -43923,9 +43742,17 @@ ${parts.join("\n")}
       Object.defineProperty(exports, "combineLatestAll", { enumerable: true, get: function() {
         return combineLatestAll_1.combineLatestAll;
       } });
+      var combineLatest_1 = require_combineLatest2();
+      Object.defineProperty(exports, "combineLatest", { enumerable: true, get: function() {
+        return combineLatest_1.combineLatest;
+      } });
       var combineLatestWith_1 = require_combineLatestWith();
       Object.defineProperty(exports, "combineLatestWith", { enumerable: true, get: function() {
         return combineLatestWith_1.combineLatestWith;
+      } });
+      var concat_1 = require_concat();
+      Object.defineProperty(exports, "concat", { enumerable: true, get: function() {
+        return concat_1.concat;
       } });
       var concatAll_1 = require_concatAll();
       Object.defineProperty(exports, "concatAll", { enumerable: true, get: function() {
@@ -44067,6 +43894,10 @@ ${parts.join("\n")}
       Object.defineProperty(exports, "max", { enumerable: true, get: function() {
         return max_1.max;
       } });
+      var merge_1 = require_merge();
+      Object.defineProperty(exports, "merge", { enumerable: true, get: function() {
+        return merge_1.merge;
+      } });
       var mergeAll_1 = require_mergeAll();
       Object.defineProperty(exports, "mergeAll", { enumerable: true, get: function() {
         return mergeAll_1.mergeAll;
@@ -44104,12 +43935,16 @@ ${parts.join("\n")}
         return observeOn_1.observeOn;
       } });
       var onErrorResumeNextWith_1 = require_onErrorResumeNextWith();
-      Object.defineProperty(exports, "onErrorResumeNextWith", { enumerable: true, get: function() {
-        return onErrorResumeNextWith_1.onErrorResumeNextWith;
+      Object.defineProperty(exports, "onErrorResumeNext", { enumerable: true, get: function() {
+        return onErrorResumeNextWith_1.onErrorResumeNext;
       } });
       var pairwise_1 = require_pairwise();
       Object.defineProperty(exports, "pairwise", { enumerable: true, get: function() {
         return pairwise_1.pairwise;
+      } });
+      var partition_1 = require_partition();
+      Object.defineProperty(exports, "partition", { enumerable: true, get: function() {
+        return partition_1.partition;
       } });
       var pluck_1 = require_pluck();
       Object.defineProperty(exports, "pluck", { enumerable: true, get: function() {
@@ -44130,6 +43965,10 @@ ${parts.join("\n")}
       var publishReplay_1 = require_publishReplay();
       Object.defineProperty(exports, "publishReplay", { enumerable: true, get: function() {
         return publishReplay_1.publishReplay;
+      } });
+      var race_1 = require_race2();
+      Object.defineProperty(exports, "race", { enumerable: true, get: function() {
+        return race_1.race;
       } });
       var raceWith_1 = require_raceWith();
       Object.defineProperty(exports, "raceWith", { enumerable: true, get: function() {
@@ -44263,9 +44102,9 @@ ${parts.join("\n")}
       Object.defineProperty(exports, "timeInterval", { enumerable: true, get: function() {
         return timeInterval_1.timeInterval;
       } });
-      var timeout_2 = require_timeout();
+      var timeout_1 = require_timeout();
       Object.defineProperty(exports, "timeout", { enumerable: true, get: function() {
-        return timeout_2.timeout;
+        return timeout_1.timeout;
       } });
       var timeoutWith_1 = require_timeoutWith();
       Object.defineProperty(exports, "timeoutWith", { enumerable: true, get: function() {
@@ -44303,6 +44142,10 @@ ${parts.join("\n")}
       Object.defineProperty(exports, "withLatestFrom", { enumerable: true, get: function() {
         return withLatestFrom_1.withLatestFrom;
       } });
+      var zip_1 = require_zip2();
+      Object.defineProperty(exports, "zip", { enumerable: true, get: function() {
+        return zip_1.zip;
+      } });
       var zipAll_1 = require_zipAll();
       Object.defineProperty(exports, "zipAll", { enumerable: true, get: function() {
         return zipAll_1.zipAll;
@@ -44321,12 +44164,12 @@ ${parts.join("\n")}
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.mapPositionsToUnitaryMovements = void 0;
       var blockwise_1 = require_dist();
-      var rxjs_1 = require_cjs();
+      var operators_1 = require_operators();
       function mapPositionsToUnitaryMovements() {
         return function(source2) {
-          return source2.pipe((0, rxjs_1.pairwise)(), (0, rxjs_1.map)(function([previous, next]) {
+          return source2.pipe((0, operators_1.pairwise)(), (0, operators_1.map)(function([previous, next]) {
             return Object.assign(Object.assign({}, blockwise_1.UNIT_BLOCK), { x: next.x - previous.x, y: next.y - previous.y });
-          }), (0, rxjs_1.filter)(function(move) {
+          }), (0, operators_1.filter)(function(move) {
             switch (move.x) {
               case -1:
               case 1:
@@ -44391,7 +44234,7 @@ ${parts.join("\n")}
     "../core/node_modules/blockwise/dist/index.js"(exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.UNIT_BLOCK = exports.ORIGIN_POSITION = exports.mapToView = exports.mapPositionsToUnitaryMovements = exports.isBlockPositionEqual = exports.isBlockNotEqual = exports.isBlockIncluding = exports.isBlockGroupCollidingBlockGroup = exports.isBlockGroupColliding = exports.isBlockEqual = exports.isBlockColliding = exports.findClosestBlock = exports.CENTERED_UNIT_BLOCK = exports.calculateBlockDistance = exports.calculateBlockCenter = exports.BlockFactory = exports.addPosition = void 0;
+      exports.UNIT_BLOCK = exports.ORIGIN_POSITION = exports.mapToView = exports.mapPositionsToUnitaryMovements = exports.isBlockPositionEqual = exports.isBlockNotEqual = exports.isBlockIncluding = exports.isBlockGroupCollidingBlockGroup = exports.isBlockGroupColliding = exports.isBlockEqual = exports.isBlockColliding = exports.findClosestBlock = exports.CENTERED_UNIT_BLOCK = exports.calculateBlockDistance = exports.calculateBlockCenter = exports.blockSchema = exports.BlockFactory = exports.addPosition = void 0;
       var add_position_1 = require_add_position();
       Object.defineProperty(exports, "addPosition", { enumerable: true, get: function() {
         return add_position_1.addPosition;
@@ -44399,6 +44242,10 @@ ${parts.join("\n")}
       var block_factory_1 = require_block_factory();
       Object.defineProperty(exports, "BlockFactory", { enumerable: true, get: function() {
         return block_factory_1.BlockFactory;
+      } });
+      var block_schema_1 = require_block_schema();
+      Object.defineProperty(exports, "blockSchema", { enumerable: true, get: function() {
+        return block_schema_1.blockSchema;
       } });
       var calculate_block_center_1 = require_calculate_block_center();
       Object.defineProperty(exports, "calculateBlockCenter", { enumerable: true, get: function() {
@@ -47882,8 +47729,8 @@ ${parts.join("\n")}
 
   // ../core/node_modules/svelte/src/runtime/internal/Component.js
   function mount_component(component, target, anchor) {
-    const { fragment: fragment2, after_update } = component.$$;
-    fragment2 && fragment2.m(target, anchor);
+    const { fragment: fragment3, after_update } = component.$$;
+    fragment3 && fragment3.m(target, anchor);
     add_render_callback(() => {
       const new_on_destroy = component.$$.on_mount.map(run).filter(is_function);
       if (component.$$.on_destroy) {
@@ -48329,7 +48176,7 @@ ${parts.join("\n")}
         return false;
       }
       try {
-        const adapter = await navigator.gpu.requestAdapter(options);
+        const adapter = await gpu.requestAdapter(options);
         await adapter.requestDevice();
         return true;
       } catch (e2) {
@@ -48387,6 +48234,7 @@ ${parts.join("\n")}
 
   // ../core/node_modules/pixi.js/lib/app/Application.mjs
   init_Container();
+  init_globalHooks();
   init_deprecation();
   var _Application = class _Application2 {
     /** @ignore */
@@ -48466,6 +48314,7 @@ ${parts.join("\n")}
   _Application._plugins = [];
   var Application = _Application;
   extensions.handleByList(ExtensionType.Application, Application._plugins);
+  extensions.add(ApplicationInitHook);
 
   // ../core/node_modules/pixi.js/lib/index.mjs
   init_textureFrom();
@@ -48526,8 +48375,8 @@ ${parts.join("\n")}
       if (t2[0] & 1)
         throw t2[1];
       return t2[1];
-    }, trys: [], ops: [] }, f2, y2, t2, g2;
-    return g2 = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g2[Symbol.iterator] = function() {
+    }, trys: [], ops: [] }, f2, y2, t2, g2 = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g2.next = verb(0), g2["throw"] = verb(1), g2["return"] = verb(2), typeof Symbol === "function" && (g2[Symbol.iterator] = function() {
       return this;
     }), g2;
     function verb(n2) {
@@ -48650,16 +48499,24 @@ ${parts.join("\n")}
     if (!Symbol.asyncIterator)
       throw new TypeError("Symbol.asyncIterator is not defined.");
     var g2 = generator.apply(thisArg, _arguments || []), i2, q = [];
-    return i2 = {}, verb("next"), verb("throw"), verb("return"), i2[Symbol.asyncIterator] = function() {
+    return i2 = Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype), verb("next"), verb("throw"), verb("return", awaitReturn), i2[Symbol.asyncIterator] = function() {
       return this;
     }, i2;
-    function verb(n2) {
-      if (g2[n2])
+    function awaitReturn(f2) {
+      return function(v2) {
+        return Promise.resolve(v2).then(f2, reject);
+      };
+    }
+    function verb(n2, f2) {
+      if (g2[n2]) {
         i2[n2] = function(v2) {
           return new Promise(function(a2, b2) {
             q.push([n2, v2, a2, b2]) > 1 || resume(n2, v2);
           });
         };
+        if (f2)
+          i2[n2] = f2(i2[n2]);
+      }
     }
     function resume(n2, v2) {
       try {
@@ -50316,7 +50173,7 @@ ${parts.join("\n")}
   var BUFFER;
   while (IDX--)
     HEX[IDX] = (IDX + 256).toString(16).substring(1);
-  function uid2(len) {
+  function uid3(len) {
     var i2 = 0, tmp = len || 11;
     if (!BUFFER || IDX + tmp > SIZE * 2) {
       for (BUFFER = "", IDX = 0; i2 < SIZE; i2++) {
@@ -50344,7 +50201,7 @@ ${parts.join("\n")}
     let clearInsertAttemps = 0;
     while (pieces.length < piecesQty) {
       const piece = {
-        id: uid2(),
+        id: uid3(),
         graphic: new Graphics(),
         block: {
           x: randomFloat(-0.5 - margin, w2 - 0.5 + margin),
@@ -50856,7 +50713,11 @@ ${parts.join("\n")}
           -mappedBlock.h / 2
         );
       }
-      graphic.fill(10074896);
+      if ((0, import_blockwise5.isBlockPositionEqual)(piece.block, finalPosition)) {
+        graphic.fill(15262033);
+      } else {
+        graphic.fill(10074896);
+      }
       graphic.stroke({ width: 2, color: 0 });
     }
   }

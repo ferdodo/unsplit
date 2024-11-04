@@ -10,9 +10,14 @@ services:
     build: front
     ports:
       - "6655:5173"
+    depends_on:
+      - cache
+      - core
 
   core:
     build:
       context: core
       tags:
         - "unsplit-core"
+    depends_on:
+      - cache

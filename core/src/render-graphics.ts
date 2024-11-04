@@ -1,5 +1,5 @@
 import { Puzzle, config, screenBlock, getPieceFinalPosition } from "core";
-import { mapToView, Block } from "blockwise";
+import { mapToView, Block, isBlockPositionEqual } from "blockwise";
 import Randoma from "randoma";
 
 export function getSeed(): string {
@@ -121,7 +121,12 @@ export function renderGraphics(puzzle: Puzzle) {
 		}
 		// --- Draw left line ---
 
-		graphic.fill(0x99bb10);
+		if (isBlockPositionEqual(piece.block, finalPosition)) {
+			graphic.fill(0xe8e151);
+		} else {
+			graphic.fill(0x99bb10);
+		}
+
 		graphic.stroke({ width: 2, color: 0 });
 	}
 }
